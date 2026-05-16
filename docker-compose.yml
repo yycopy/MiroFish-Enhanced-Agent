@@ -1,0 +1,191 @@
+services:
+  # Legacy full-stack image kept for the original one-command startup path.
+  # It is opt-in so the enhanced services below can be started by default.
+  mirofish:
+    image: ghcr.io/666ghj/mirofish:latest
+    container_name: mirofish
+    profiles:
+      - legacy
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+      - "5001:5001"
+    restart: unless-stopped
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+
+  mysql:
+    image: mysql:8.0
+    container_name: mirofish-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-mirofish_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mirofish}
+      MYSQL_USER: ${MYSQL_USER:-mirofish}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mirofish_password}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: mirofish-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-mirofish}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-mirofish_password}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: mirofish-chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    ports:
+      - "${CHROMA_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import socket; s=socket.create_connection(('127.0.0.1', 8000), 5); s.close()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  backend-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mirofish-enhanced-backend:latest
+    container_name: mirofish-backend-app
+    env_file:
+      - .env
+    environment:
+      FLASK_HOST: 0.0.0.0
+      FLASK_PORT: 5001
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-mirofish}:${RABBITMQ_PASSWORD:-mirofish_password}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-rpc://}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_HTTP_URL: http://chroma:8000
+      CHROMA_USE_HTTP: "true"
+    working_dir: /app/backend
+    command: ["uv", "run", "python", "run.py"]
+    ports:
+      - "${FLASK_PORT:-5001}:5001"
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  celery-worker:
+    image: mirofish-enhanced-backend:latest
+    container_name: mirofish-celery-worker
+    env_file:
+      - .env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-mirofish}:${RABBITMQ_PASSWORD:-mirofish_password}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-rpc://}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_HTTP_URL: http://chroma:8000
+      CHROMA_USE_HTTP: "true"
+    working_dir: /app/backend
+    command: ["uv", "run", "celery", "-A", "app.tasks.celery_app", "worker", "-l", "info"]
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./logs:/app/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    image: mirofish-enhanced-backend:latest
+    container_name: mirofish-scheduler
+    env_file:
+      - .env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-mirofish}:${RABBITMQ_PASSWORD:-mirofish_password}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-rpc://}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      CHROMA_HTTP_URL: http://chroma:8000
+      CHROMA_USE_HTTP: "true"
+    working_dir: /app/backend
+    command: ["uv", "run", "python", "-m", "app.tasks.scheduler"]
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./logs:/app/logs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  chroma_data:
