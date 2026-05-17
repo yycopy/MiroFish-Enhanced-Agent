@@ -20,6 +20,26 @@ from ..models.project import ProjectManager
 logger = get_logger('mirofish.api.simulation')
 
 
+def _clean_error_message(error: Exception) -> str:
+    """从异常中提取对用户友好的错误信息。"""
+    msg = str(error)
+    # Zep/Cloud API 429 速率限制
+    if 'status_code: 429' in msg or 'Rate limit exceeded' in msg:
+        return 'Zep Cloud API 速率限制，请稍后重试（免费计划限制每分钟5次请求）'
+    # Zep/Cloud API 其他错误
+    if 'zep_cloud' in str(type(error)) or 'ApiError' in str(type(error)):
+        # 提取 body 部分
+        if 'body:' in msg:
+            body = msg.split('body:')[-1].strip()
+            if body and len(body) < 200:
+                return f'Zep Cloud API 错误: {body}'
+        return f'Zep Cloud API 错误: {msg[:150]}'
+    # 通用：截断过长的错误信息
+    if len(msg) > 300:
+        return msg[:300] + '...'
+    return msg
+
+
 # Interview prompt 优化前缀
 # 添加此前缀可以避免Agent调用工具，直接用文本回复
 INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
@@ -678,14 +698,15 @@ def prepare_simulation():
                 _auto_start_project_ingestion(state.project_id)
 
             except Exception as e:
+                clean_msg = _clean_error_message(e)
                 logger.error(f"准备模拟失败: {str(e)}")
-                task_manager.fail_task(task_id, str(e))
-                
+                task_manager.fail_task(task_id, clean_msg)
+
                 # 更新模拟状态为失败
                 state = manager.get_simulation(simulation_id)
                 if state:
                     state.status = SimulationStatus.FAILED
-                    state.error = str(e)
+                    state.error = clean_msg
                     manager._save_simulation_state(state)
         
         # 启动后台线程

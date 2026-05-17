@@ -9,6 +9,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+import httpx
 from zep_cloud.client import Zep
 
 from ..config import Config
@@ -36,7 +37,10 @@ class ZepMemoryWriter:
         if not self.graph_id:
             raise ZepGraphMemoryUnavailable("ZEP_ENHANCED_GRAPH_ID is not configured")
 
-        self.client = Zep(api_key=self.api_key)
+        self.client = Zep(api_key=self.api_key, httpx_client=httpx.Client(
+            proxy=None,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+        ))
         self.schema_service = ZepSchemaService()
 
     def write_graph_memory(self, memory_item: Dict[str, Any]) -> Dict[str, Any]:

@@ -68,6 +68,14 @@ export const getTraceableReport = (reportId) => {
   return service.get(`/api/report/traceable/${reportId}`)
 }
 
+/**
+ * 查询可追溯报告生成进度
+ * @param {string} taskId
+ */
+export const getTraceableStatus = (taskId) => {
+  return service.get('/api/report/traceable/status', { params: { task_id: taskId } })
+}
+
 // ============== ReportAgent 工具日志 ==============
 
 /**

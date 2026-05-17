@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from openai import OpenAI
+import httpx
 from zep_cloud.client import Zep
 
 from ..config import Config
@@ -205,7 +206,10 @@ class OasisProfileGenerator:
         
         if self.zep_api_key:
             try:
-                self.zep_client = Zep(api_key=self.zep_api_key)
+                self.zep_client = Zep(api_key=self.zep_api_key, httpx_client=httpx.Client(
+                    proxy=None,
+                    timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+                ))
             except Exception as e:
                 logger.warning(f"Zep客户端初始化失败: {e}")
     

@@ -23,10 +23,7 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step {{ currentStep }}/6</span>
-          <span class="step-name">{{ $tm('main.stepNames')[currentStep - 1] }}</span>
-        </div>
+        <StepNav :currentStep="currentStep" :fullyCompleted="simCompleted" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -86,6 +83,8 @@ import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import StepNav from '../components/StepNav.vue'
+import { saveWorkflowId, markStepCompleted, setCurrentStep, getWorkflowId, isSimulationCompleted } from '../store/workflow'
 
 const route = useRoute()
 const router = useRouter()
@@ -109,6 +108,10 @@ const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
+const simCompleted = computed(() => {
+  const simId = getWorkflowId('simulationId')
+  return simId ? isSimulationCompleted(simId) : false
+})
 
 // Polling timers
 let pollTimer = null
@@ -183,6 +186,7 @@ const handleGoBack = () => {
 // --- Data Logic ---
 
 const initProject = async () => {
+  setCurrentStep(1)
   addLog('Project view initialized.')
   if (currentProjectId.value === 'new') {
     await handleNewProject()
@@ -214,6 +218,8 @@ const handleNewProject = async () => {
       clearPendingUpload()
       currentProjectId.value = res.data.project_id
       projectData.value = res.data
+      saveWorkflowId('projectId', res.data.project_id)
+      markStepCompleted(1)
       
       router.replace({ name: 'Process', params: { projectId: res.data.project_id } })
       ontologyProgress.value = null
@@ -239,6 +245,7 @@ const loadProject = async () => {
     if (res.success) {
       projectData.value = res.data
       updatePhaseByStatus(res.data.status)
+      saveWorkflowId('projectId', currentProjectId.value)
       addLog(`Project loaded. Status: ${res.data.status}`)
       
       if (res.data.status === 'ontology_generated' && !res.data.graph_id) {

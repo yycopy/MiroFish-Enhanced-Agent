@@ -23,10 +23,7 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step 6/6</span>
-          <span class="step-name">{{ $tm('main.stepNames')[5] }}</span>
-        </div>
+        <StepNav :currentStep="6" :fullyCompleted="simCompleted" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -73,6 +70,8 @@ import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import StepNav from '../components/StepNav.vue'
+import { saveWorkflowId, markStepCompleted, setCurrentStep, isSimulationCompleted, markSimulationCompleted } from '../store/workflow'
 
 const route = useRoute()
 const router = useRouter()
@@ -94,6 +93,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('ready') // ready | processing | completed | error
+const simCompleted = computed(() => isSimulationCompleted(simulationId.value))
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -153,11 +153,19 @@ const loadReportData = async () => {
       const reportData = reportRes.data
       simulationId.value = reportData.simulation_id
 
+      // 保存 ID 到 sessionStorage
+      saveWorkflowId('reportId', currentReportId.value)
+      if (simulationId.value) saveWorkflowId('simulationId', simulationId.value)
+      markStepCompleted(6)
+
       if (simulationId.value) {
         // 获取 simulation 信息
         const simRes = await getSimulation(simulationId.value)
         if (simRes.success && simRes.data) {
           const simData = simRes.data
+          if (simData.status === 'completed') {
+            markSimulationCompleted(simulationId.value)
+          }
 
           // 获取 project 信息
           if (simData.project_id) {
@@ -213,6 +221,7 @@ watch(() => route.params.reportId, (newId) => {
 }, { immediate: true })
 
 onMounted(() => {
+  setCurrentStep(6)
   addLog(t('log.interactionViewInit'))
   loadReportData()
 })

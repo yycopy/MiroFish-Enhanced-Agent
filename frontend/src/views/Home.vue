@@ -306,8 +306,12 @@ const scrollToBottom = () => {
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
   
-  // 存储待上传的数据
-  import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
+  // 存储待上传的数据并重置 workflow 状态
+  Promise.all([
+    import('../store/pendingUpload.js'),
+    import('../store/workflow.js')
+  ]).then(([{ setPendingUpload }, { resetWorkflow }]) => {
+    resetWorkflow()
     setPendingUpload(files.value, formData.value.simulationRequirement)
     
     // 立即跳转到Process页面（使用特殊标识表示新建项目）

@@ -7,7 +7,9 @@ import time
 from typing import Dict, Any, List, Optional, Set, Callable, TypeVar
 from dataclasses import dataclass, field
 
+import httpx
 from zep_cloud.client import Zep
+from zep_cloud.core.api_error import ApiError
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -83,33 +85,61 @@ class ZepEntityReader:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY 未配置")
         
-        self.client = Zep(api_key=self.api_key)
+        self.client = Zep(api_key=self.api_key, httpx_client=httpx.Client(
+            proxy=None,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+        ))
     
     def _call_with_retry(
-        self, 
-        func: Callable[[], T], 
+        self,
+        func: Callable[[], T],
         operation_name: str,
         max_retries: int = 3,
         initial_delay: float = 2.0
     ) -> T:
         """
-        带重试机制的Zep API调用
-        
+        带重试机制的Zep API调用，429速率限制时读取retry-after
+
         Args:
             func: 要执行的函数（无参数的lambda或callable）
             operation_name: 操作名称，用于日志
             max_retries: 最大重试次数（默认3次，即最多尝试3次）
             initial_delay: 初始延迟秒数
-            
+
         Returns:
             API调用结果
         """
         last_exception = None
         delay = initial_delay
-        
+
         for attempt in range(max_retries):
             try:
                 return func()
+            except ApiError as e:
+                last_exception = e
+                if getattr(e, 'status_code', None) == 429 and attempt < max_retries - 1:
+                    retry_after = 20
+                    try:
+                        headers = getattr(e, 'headers', None) or {}
+                        if 'retry-after' in headers:
+                            retry_after = int(headers['retry-after'])
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"Zep {operation_name} 速率限制(429), {retry_after}秒后重试 "
+                        f"(第 {attempt + 1}/{max_retries} 次)"
+                    )
+                    time.sleep(retry_after)
+                    delay = max(delay, retry_after)
+                elif attempt < max_retries - 1:
+                    logger.warning(
+                        f"Zep {operation_name} API错误 {getattr(e, 'status_code', '?')}: {str(e)[:100]}, "
+                        f"{delay:.1f}秒后重试..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(f"Zep {operation_name} 在 {max_retries} 次尝试后仍失败: {str(e)}")
             except Exception as e:
                 last_exception = e
                 if attempt < max_retries - 1:
@@ -121,7 +151,7 @@ class ZepEntityReader:
                     delay *= 2  # 指数退避
                 else:
                     logger.error(f"Zep {operation_name} 在 {max_retries} 次尝试后仍失败: {str(e)}")
-        
+
         raise last_exception
     
     def get_all_nodes(self, graph_id: str) -> List[Dict[str, Any]]:

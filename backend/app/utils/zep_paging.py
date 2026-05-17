@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from zep_cloud import InternalServerError
+from zep_cloud.core.api_error import ApiError
 from zep_cloud.client import Zep
 
 from .logger import get_logger
@@ -31,7 +32,7 @@ def _fetch_page_with_retry(
     page_description: str = "page",
     **kwargs: Any,
 ) -> list[Any]:
-    """单页请求，失败时指数退避重试。仅重试网络/IO类瞬态错误。"""
+    """单页请求，失败时指数退避重试。处理429速率限制和瞬态错误。"""
     if max_retries < 1:
         raise ValueError("max_retries must be >= 1")
 
@@ -51,9 +52,39 @@ def _fetch_page_with_retry(
                 delay *= 2
             else:
                 logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
+        except ApiError as e:
+            last_exception = e
+            if getattr(e, 'status_code', None) == 429 and attempt < max_retries - 1:
+                retry_after = _extract_retry_after(e)
+                logger.warning(
+                    f"Zep {page_description} rate limited (429), retrying after {retry_after}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(retry_after)
+                delay = max(delay, retry_after)
+            elif attempt < max_retries - 1:
+                logger.warning(
+                    f"Zep {page_description} API error {getattr(e, 'status_code', '?')}: {str(e)[:100]}, "
+                    f"retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
 
     assert last_exception is not None
     raise last_exception
+
+
+def _extract_retry_after(exc: ApiError) -> float:
+    """从 ApiError 中提取 retry-after 秒数，默认 20 秒。"""
+    try:
+        headers = getattr(exc, 'headers', None) or {}
+        if 'retry-after' in headers:
+            return float(headers['retry-after'])
+    except Exception:
+        pass
+    return 20.0
 
 
 def fetch_all_nodes(

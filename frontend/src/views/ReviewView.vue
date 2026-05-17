@@ -23,10 +23,7 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step 5/6</span>
-          <span class="step-name">{{ $tm('main.stepNames')[4] }}</span>
-        </div>
+        <StepNav :currentStep="5" :fullyCompleted="simCompleted" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -72,6 +69,8 @@ import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import StepNav from '../components/StepNav.vue'
+import { saveWorkflowId, markStepCompleted, setCurrentStep, isSimulationCompleted, markSimulationCompleted } from '../store/workflow'
 
 const route = useRoute()
 const router = useRouter()
@@ -93,6 +92,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing')
+const simCompleted = computed(() => isSimulationCompleted(simulationId.value))
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -138,14 +138,24 @@ const loadReportData = async () => {
     if (reportRes.success && reportRes.data) {
       simulationId.value = reportRes.data.simulation_id
 
+      // 保存 ID 到 sessionStorage
+      saveWorkflowId('reportId', currentReportId.value)
+      if (simulationId.value) saveWorkflowId('simulationId', simulationId.value)
+      markStepCompleted(5)
+
       if (simulationId.value) {
         const simRes = await getSimulation(simulationId.value)
-        if (simRes.success && simRes.data?.project_id) {
-          const projRes = await getProject(simRes.data.project_id)
-          if (projRes.success && projRes.data) {
-            projectData.value = projRes.data
-            if (projRes.data.graph_id) {
-              await loadGraph(projRes.data.graph_id)
+        if (simRes.success && simRes.data) {
+          if (simRes.data.status === 'completed') {
+            markSimulationCompleted(simulationId.value)
+          }
+          if (simRes.data.project_id) {
+            const projRes = await getProject(simRes.data.project_id)
+            if (projRes.success && projRes.data) {
+              projectData.value = projRes.data
+              if (projRes.data.graph_id) {
+                await loadGraph(projRes.data.graph_id)
+              }
             }
           }
         }
@@ -181,6 +191,7 @@ watch(() => route.params.reportId, (newId) => {
 }, { immediate: true })
 
 onMounted(() => {
+  setCurrentStep(5)
   addLog(t('log.reviewViewInit') || 'Review view initialized')
   loadReportData()
 })

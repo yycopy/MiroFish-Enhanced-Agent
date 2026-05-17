@@ -195,6 +195,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import { saveWorkflowId, setCurrentStep, markStepCompleted } from '../store/workflow'
 
 const router = useRouter()
 const route = useRoute()
@@ -406,9 +407,15 @@ const closeModal = () => {
 // 导航到图谱构建页面（Project）
 const goToProject = () => {
   if (selectedProject.value?.project_id) {
+    const p = selectedProject.value
+    saveWorkflowId('projectId', p.project_id)
+    if (p.simulation_id) saveWorkflowId('simulationId', p.simulation_id)
+    if (p.report_id) saveWorkflowId('reportId', p.report_id)
+    setCurrentStep(1)
+    markStepCompleted(1)
     router.push({
       name: 'Process',
-      params: { projectId: selectedProject.value.project_id }
+      params: { projectId: p.project_id }
     })
     closeModal()
   }
@@ -417,9 +424,16 @@ const goToProject = () => {
 // 导航到环境配置页面（Simulation）
 const goToSimulation = () => {
   if (selectedProject.value?.simulation_id) {
+    const p = selectedProject.value
+    if (p.project_id) saveWorkflowId('projectId', p.project_id)
+    saveWorkflowId('simulationId', p.simulation_id)
+    if (p.report_id) saveWorkflowId('reportId', p.report_id)
+    setCurrentStep(2)
+    markStepCompleted(1)
+    markStepCompleted(2)
     router.push({
       name: 'Simulation',
-      params: { simulationId: selectedProject.value.simulation_id }
+      params: { simulationId: p.simulation_id }
     })
     closeModal()
   }
@@ -428,9 +442,18 @@ const goToSimulation = () => {
 // 导航到分析报告页面（Report）
 const goToReport = () => {
   if (selectedProject.value?.report_id) {
+    const p = selectedProject.value
+    if (p.project_id) saveWorkflowId('projectId', p.project_id)
+    if (p.simulation_id) saveWorkflowId('simulationId', p.simulation_id)
+    saveWorkflowId('reportId', p.report_id)
+    setCurrentStep(4)
+    markStepCompleted(1)
+    markStepCompleted(2)
+    markStepCompleted(3)
+    markStepCompleted(4)
     router.push({
       name: 'Report',
-      params: { reportId: selectedProject.value.report_id }
+      params: { reportId: p.report_id }
     })
     closeModal()
   }

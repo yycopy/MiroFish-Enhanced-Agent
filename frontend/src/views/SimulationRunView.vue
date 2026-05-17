@@ -23,10 +23,7 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step 3/6</span>
-          <span class="step-name">{{ $tm('main.stepNames')[2] }}</span>
-        </div>
+        <StepNav :currentStep="3" :fullyCompleted="simCompleted" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -76,6 +73,8 @@ import Step3Simulation from '../components/Step3Simulation.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus } from '../api/simulation'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import StepNav from '../components/StepNav.vue'
+import { saveWorkflowId, markStepCompleted, setCurrentStep, isSimulationCompleted, markSimulationCompleted } from '../store/workflow'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -100,6 +99,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+const simCompleted = computed(() => isSimulationCompleted(currentSimulationId.value))
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -138,6 +138,10 @@ const addLog = (msg) => {
 
 const updateStatus = (status) => {
   currentStatus.value = status
+  if (status === 'completed') {
+    markStepCompleted(3)
+    markSimulationCompleted(currentSimulationId.value)
+  }
 }
 
 // --- Layout Methods ---
@@ -212,6 +216,12 @@ const loadSimulationData = async () => {
     const simRes = await getSimulation(currentSimulationId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
+
+      // 如果模拟已完成，标记完成状态
+      if (simData.status === 'completed') {
+        markSimulationCompleted(currentSimulationId.value)
+        markStepCompleted(3)
+      }
       
       // 获取 simulation config 以获取 minutes_per_round
       try {
@@ -300,6 +310,8 @@ watch(isSimulating, (newValue) => {
 }, { immediate: true })
 
 onMounted(() => {
+  setCurrentStep(3)
+  saveWorkflowId('simulationId', currentSimulationId.value)
   addLog(t('log.simRunViewInit'))
   
   // 记录 maxRounds 配置（值已在初始化时从 query 参数获取）

@@ -615,47 +615,195 @@ def get_generate_status():
 @report_bp.route('/traceable', methods=['POST'])
 def generate_traceable_report():
     """
-    Generate a traceable prediction report with enhanced report tools.
+    Generate a traceable prediction report (async).
 
-    This route is additive and does not replace the original asynchronous
-    /api/report/generate workflow.
+    Returns task_id immediately. Poll GET /api/report/traceable/status?task_id=xxx
+    for progress. When completed, the task result contains the full report data.
     """
     try:
         data = request.get_json() or {}
 
         question = (data.get('question') or '').strip()
+
+        # If no question provided, try to derive it from the report_id or simulation_id
+        if not question:
+            report_id = data.get('report_id')
+            simulation_id = data.get('simulation_id')
+
+            # Try getting from existing report
+            if report_id:
+                report = ReportManager.get_report(report_id)
+                if report:
+                    question = report.simulation_requirement or ''
+
+            # Fallback: get from simulation → project
+            if not question and simulation_id:
+                manager = SimulationManager()
+                state = manager.get_simulation(simulation_id)
+                if state:
+                    project = ProjectManager.get_project(state.project_id)
+                    if project:
+                        question = project.simulation_requirement or ''
+
         if not question:
             return jsonify({
                 "success": False,
-                "error": "question is required"
+                "error": "question is required (could not derive from report_id or simulation_id)"
             }), 400
 
-        from ..services.traceable_report_agent import TraceableReportAgent
+        # Resolve project_id and graph_id from report/simulation if not provided
+        project_id = data.get("project_id")
+        simulation_id = data.get("simulation_id")
+        graph_id = data.get("graph_id")
 
-        agent = TraceableReportAgent()
-        result = agent.run_traceable_report(
-            question=question,
-            options={
-                "project_id": data.get("project_id"),
-                "simulation_id": data.get("simulation_id"),
-                "graph_id": data.get("graph_id"),
+        if not project_id or not graph_id:
+            report_id = data.get("report_id")
+            if report_id:
+                report = ReportManager.get_report(report_id)
+                if report:
+                    if not simulation_id:
+                        simulation_id = report.simulation_id
+                    if not graph_id:
+                        graph_id = report.graph_id
+
+            if simulation_id and (not project_id or not graph_id):
+                manager = SimulationManager()
+                state = manager.get_simulation(simulation_id)
+                if state:
+                    if not project_id:
+                        project_id = state.project_id
+                    if not graph_id:
+                        graph_id = state.graph_id or graph_id
+                    if not project_id:
+                        project = ProjectManager.get_project(state.project_id)
+                        if project:
+                            project_id = project.project_id
+                            if not graph_id:
+                                graph_id = project.graph_id
+
+        # Create async task
+        task_manager = TaskManager()
+        task_id = task_manager.create_task(
+            task_type="traceable_report",
+            metadata={
+                "question": question,
+                "project_id": project_id,
+                "simulation_id": simulation_id,
+                "graph_id": graph_id,
                 "use_active_search": bool(data.get("use_active_search", False)),
                 "use_review": bool(data.get("use_review", True)),
             }
         )
 
+        # Capture locale for background thread
+        current_locale = get_locale()
+
+        # Step name mapping for progress display
+        step_names_zh = {
+            "memory_recall": "记忆召回",
+            "graph_retrieve": "图谱检索",
+            "active_search": "主动搜索",
+            "interview": "Agent 采访",
+            "evidence_trace": "证据溯源",
+            "draft_report": "生成初稿",
+            "confidence_review": "可信评审",
+            "revise_report": "修订报告",
+        }
+        step_names_en = {
+            "memory_recall": "Recalling memories",
+            "graph_retrieve": "Retrieving graph",
+            "active_search": "Active search",
+            "interview": "Interviewing agents",
+            "evidence_trace": "Tracing evidence",
+            "draft_report": "Drafting report",
+            "confidence_review": "Confidence review",
+            "revise_report": "Revising report",
+        }
+        step_order = ["memory_recall", "graph_retrieve", "active_search", "interview",
+                       "evidence_trace", "draft_report", "confidence_review", "revise_report"]
+
+        def _run_traceable():
+            set_locale(current_locale)
+            try:
+                from ..services.traceable_report_agent import TraceableReportAgent
+
+                def on_progress(step_name, details):
+                    idx = step_order.index(step_name) if step_name in step_order else 0
+                    total = len(step_order)
+                    status = details.get("status", "start")
+                    names = step_names_zh if get_locale() == "zh" else step_names_en
+                    label = names.get(step_name, step_name)
+
+                    if status == "start":
+                        progress = int(10 + 70 * idx / total)
+                        task_manager.update_task(task_id, progress=progress, message=f"{label}...")
+                    else:
+                        progress = int(10 + 70 * (idx + 1) / total)
+                        count = details.get("count", "")
+                        suffix = f" ({count})" if count else ""
+                        task_manager.update_task(task_id, progress=progress, message=f"{label}{suffix}")
+
+                agent = TraceableReportAgent()
+                result = agent.run_traceable_report(
+                    question=question,
+                    options={
+                        "project_id": project_id,
+                        "simulation_id": simulation_id,
+                        "graph_id": graph_id,
+                        "use_active_search": bool(data.get("use_active_search", False)),
+                        "use_review": bool(data.get("use_review", True)),
+                    },
+                    on_progress=on_progress,
+                )
+
+                # Save trace data
+                trace_report_id = f"trace_{task_id}"
+                _save_enhanced_trace_data(trace_report_id, result)
+
+                task_manager.update_task(task_id, progress=90, message=t('step5.assemblingReport'))
+                task_manager.complete_task(task_id, result=result)
+
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.error(f"Traceable report generation failed: {str(e)}\n{tb}")
+                task_manager.fail_task(task_id, f"{str(e)}\n{tb}")
+
+        thread = threading.Thread(target=_run_traceable, daemon=True)
+        thread.start()
+
         return jsonify({
             "success": True,
-            **result
+            "task_id": task_id,
+            "status": "generating",
         })
 
     except Exception as e:
-        logger.error(f"Traceable report generation failed: {str(e)}")
+        logger.error(f"Traceable report start failed: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+@report_bp.route('/traceable/status', methods=['GET'])
+def get_traceable_status():
+    """Poll traceable report generation progress."""
+    try:
+        task_id = request.args.get('task_id')
+        if not task_id:
+            return jsonify({"success": False, "error": "task_id required"}), 400
+
+        task_manager = TaskManager()
+        task = task_manager.get_task(task_id)
+        if not task:
+            return jsonify({"success": False, "error": "task not found"}), 404
+
+        return jsonify({"success": True, "data": task.to_dict()})
+
+    except Exception as e:
+        logger.error(f"Traceable status query failed: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @report_bp.route('/<report_id>', methods=['GET'])
@@ -695,6 +843,7 @@ def get_report(report_id: str):
         if enhanced_trace:
             data["use_enhanced"] = True
             data["enhanced_trace"] = {
+                "report": enhanced_trace.get("report", ""),
                 "evidence_trace": enhanced_trace.get("evidence_trace", []),
                 "memory_used": enhanced_trace.get("memory_used", []),
                 "graph_relations_used": enhanced_trace.get("graph_relations_used", []),

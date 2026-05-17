@@ -1,5 +1,6 @@
 <template>
   <div class="workbench-panel">
+    <IngestionStatusStrip :projectId="props.projectData?.project_id || ''" />
     <div class="scroll-container">
       <!-- Step 01: Ontology -->
       <div class="step-card" :class="{ 'active': currentPhase === 0, 'completed': currentPhase > 0 }">
@@ -143,37 +144,11 @@
         </div>
       </div>
 
-      <!-- Step 03: Complete -->
-      <div class="step-card" :class="{ 'active': currentPhase === 2, 'completed': currentPhase >= 2 }">
-        <div class="card-header">
-          <div class="step-info">
-            <span class="step-num">03</span>
-            <span class="step-title">{{ $t('step1.buildComplete') }}</span>
-          </div>
-          <div class="step-status">
-            <span v-if="currentPhase >= 2" class="badge accent">{{ $t('step1.inProgress') }}</span>
-          </div>
-        </div>
-        
-        <div class="card-content">
-          <p class="api-note">POST /api/simulation/create</p>
-          <p class="description">{{ $t('step1.buildCompleteDesc') }}</p>
-          <button 
-            class="action-btn" 
-            :disabled="currentPhase < 2 || creatingSimulation"
-            @click="handleEnterEnvSetup"
-          >
-            <span v-if="creatingSimulation" class="spinner-sm"></span>
-            {{ creatingSimulation ? $t('step1.creating') : $t('step1.enterEnvSetup') + ' ➝' }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Step 04: Import from Memory -->
+      <!-- Step 03: Import from Memory (moved from 04) -->
       <div class="step-card" :class="{ 'active': currentPhase >= 2 && importResult, 'completed': importResult?.success }">
         <div class="card-header">
           <div class="step-info">
-            <span class="step-num">04</span>
+            <span class="step-num">03</span>
             <span class="step-title">{{ $t('step1.memoryImportTitle') }}</span>
           </div>
           <div class="step-status">
@@ -217,6 +192,143 @@
           </div>
         </div>
       </div>
+
+      <!-- Step 04: Timed Ingestion (new) -->
+      <div class="step-card" :class="{ 'active': currentPhase >= 2 && ingestionStatus?.active, 'completed': ingestionStatus?.total_runs > 0 }">
+        <div class="card-header">
+          <div class="step-info">
+            <span class="step-num">04</span>
+            <span class="step-title">{{ $t('step2.ingestionTitle') }}</span>
+          </div>
+          <div class="step-status">
+            <span v-if="ingestionStatus?.active" class="badge processing">{{ $t('step2.ingestionRunning') }}</span>
+            <span v-else-if="isStartingIngestion || isStoppingIngestion" class="badge processing">{{ $t('step2.ingestionBusy') }}</span>
+            <span v-else class="badge pending">{{ $t('step2.ingestionReady') }}</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <p class="api-note">POST /api/ingestion/project/:id/extract-keywords | start | stop</p>
+          <p class="description">{{ $t('step2.ingestionDesc') }}</p>
+
+          <!-- A: Keyword Extraction -->
+          <div class="ingestion-section">
+            <div class="ingestion-section-header">
+              <span class="ingestion-section-title">{{ $t('step2.ingestionKeywordExtract') }}</span>
+            </div>
+            <button
+              class="action-btn secondary small"
+              :disabled="isExtractingKeywords || currentPhase < 2"
+              @click="handleExtractKeywords"
+            >
+              <span v-if="isExtractingKeywords" class="spinner-sm"></span>
+              {{ isExtractingKeywords ? $t('step2.ingestionExtracting') : $t('step2.ingestionExtractBtn') }}
+            </button>
+            <div v-if="keywords.length > 0" class="keywords-display">
+              <span v-for="(kw, idx) in keywords" :key="idx" class="keyword-tag">
+                {{ kw }}
+                <button class="keyword-remove" @click="keywords.splice(idx, 1)">×</button>
+              </span>
+              <input
+                v-model="newKeyword"
+                class="keyword-input-inline"
+                :placeholder="$t('step2.ingestionAddKeyword')"
+                @keyup.enter="addKeyword"
+              />
+            </div>
+            <div v-if="extractError" class="ingestion-error">{{ extractError }}</div>
+          </div>
+
+          <!-- B: Interval Config -->
+          <div v-if="keywords.length > 0" class="ingestion-section">
+            <div class="ingestion-section-header">
+              <span class="ingestion-section-title">{{ $t('step2.ingestionInterval') }}</span>
+            </div>
+            <div class="interval-config">
+              <input
+                type="range"
+                v-model.number="ingestionInterval"
+                min="60"
+                max="7200"
+                step="60"
+                class="import-slider"
+                :disabled="ingestionStatus?.active"
+              />
+              <span class="interval-value">{{ formatInterval(ingestionInterval) }}</span>
+            </div>
+            <div class="ingestion-actions">
+              <button
+                class="action-btn primary small"
+                :disabled="isStartingIngestion || ingestionStatus?.active"
+                @click="handleStartIngestion"
+              >
+                <span v-if="isStartingIngestion" class="spinner-sm"></span>
+                {{ isStartingIngestion ? $t('step2.ingestionStarting') : $t('step2.ingestionStartBtn') }}
+              </button>
+              <button
+                class="action-btn secondary small"
+                :disabled="isStoppingIngestion || !ingestionStatus?.active"
+                @click="handleStopIngestion"
+              >
+                {{ isStoppingIngestion ? $t('step2.ingestionStopping') : $t('step2.ingestionStopBtn') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- C: Status -->
+          <div v-if="ingestionStatus" class="ingestion-section">
+            <div class="ingestion-section-header">
+              <span class="ingestion-section-title">{{ $t('step2.ingestionStatus') }}</span>
+            </div>
+            <div class="ingestion-status-grid">
+              <div class="status-item">
+                <span class="status-label">{{ $t('step2.ingestionStateLabel') }}</span>
+                <span class="status-value" :class="ingestionStatus.active ? 'active' : 'inactive'">
+                  {{ ingestionStatus.active ? $t('step2.ingestionStateCollecting') : $t('step2.ingestionStateIdle') }}
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">{{ $t('step2.ingestionKeywordsLabel') }}</span>
+                <span class="status-value mono">{{ (ingestionStatus.keywords || []).join(', ') || '-' }}</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">{{ $t('step2.ingestionIntervalLabel') }}</span>
+                <span class="status-value mono">{{ formatInterval(ingestionStatus.interval_seconds) }}</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">{{ $t('step2.ingestionTotalRunsLabel') }}</span>
+                <span class="status-value mono">{{ ingestionStatus.total_runs || 0 }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 05: Build Complete (moved from 03) -->
+      <div class="step-card" :class="{ 'active': currentPhase === 2, 'completed': currentPhase > 2 }">
+        <div class="card-header">
+          <div class="step-info">
+            <span class="step-num">05</span>
+            <span class="step-title">{{ $t('step1.buildComplete') }}</span>
+          </div>
+          <div class="step-status">
+            <span v-if="currentPhase > 2" class="badge success">{{ $t('step1.ontologyCompleted') }}</span>
+            <span v-else-if="currentPhase === 2" class="badge accent">{{ $t('step1.inProgress') }}</span>
+          </div>
+        </div>
+
+        <div class="card-content">
+          <p class="api-note">POST /api/simulation/create</p>
+          <p class="description">{{ $t('step1.buildCompleteDesc') }}</p>
+          <button
+            class="action-btn"
+            :disabled="currentPhase < 2 || creatingSimulation"
+            @click="handleEnterEnvSetup"
+          >
+            <span v-if="creatingSimulation" class="spinner-sm"></span>
+            {{ creatingSimulation ? $t('step1.creating') : $t('step1.enterEnvSetup') + ' ➝' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Bottom Info / Logs -->
@@ -236,11 +348,12 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { createSimulation } from '../api/simulation'
+import { createSimulation, extractProjectKeywords, startProjectIngestion, stopProjectIngestion, getProjectIngestionStatus } from '../api/simulation'
 import { importMemoriesToGraph } from '../api/graph'
+import IngestionStatusStrip from './IngestionStatusStrip.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -284,6 +397,111 @@ const handleImportMemories = async () => {
     importResult.value = { success: false, error: err.message }
   } finally {
     importingMemories.value = false
+  }
+}
+
+// 定时采集信息状态
+const keywords = ref([])
+const newKeyword = ref('')
+const isExtractingKeywords = ref(false)
+const extractError = ref('')
+const ingestionInterval = ref(1800)
+const ingestionStatus = ref(null)
+const isStartingIngestion = ref(false)
+const isStoppingIngestion = ref(false)
+let ingestionPollTimer = null
+
+const addKeyword = () => {
+  const kw = newKeyword.value.trim()
+  if (kw && !keywords.value.includes(kw)) {
+    keywords.value.push(kw)
+  }
+  newKeyword.value = ''
+}
+
+const formatInterval = (seconds) => {
+  if (!seconds) return '-'
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}min`
+  return `${(seconds / 3600).toFixed(1)}h`
+}
+
+const handleExtractKeywords = async () => {
+  if (!props.projectData?.project_id) return
+  isExtractingKeywords.value = true
+  extractError.value = ''
+  try {
+    const res = await extractProjectKeywords(props.projectData.project_id, {
+      simulation_requirement: props.projectData.simulation_requirement || ''
+    })
+    if (res.success && res.keywords) {
+      keywords.value = res.keywords
+    } else {
+      extractError.value = res.error || 'Extraction failed'
+    }
+  } catch (err) {
+    extractError.value = err.message || 'Extraction error'
+  } finally {
+    isExtractingKeywords.value = false
+  }
+}
+
+const handleStartIngestion = async () => {
+  if (!props.projectData?.project_id || keywords.value.length === 0) return
+  isStartingIngestion.value = true
+  try {
+    const res = await startProjectIngestion(props.projectData.project_id, {
+      keywords: keywords.value,
+      interval_seconds: ingestionInterval.value
+    })
+    if (res.success) {
+      ingestionStatus.value = { active: true, keywords: keywords.value, interval_seconds: ingestionInterval.value, total_runs: 0 }
+      startIngestionPolling()
+    }
+  } catch (err) {
+    console.error('Start ingestion failed:', err)
+  } finally {
+    isStartingIngestion.value = false
+  }
+}
+
+const handleStopIngestion = async () => {
+  if (!props.projectData?.project_id) return
+  isStoppingIngestion.value = true
+  try {
+    const res = await stopProjectIngestion(props.projectData.project_id)
+    if (res.success) {
+      ingestionStatus.value = { ...ingestionStatus.value, active: false }
+      stopIngestionPolling()
+    }
+  } catch (err) {
+    console.error('Stop ingestion failed:', err)
+  } finally {
+    isStoppingIngestion.value = false
+  }
+}
+
+const startIngestionPolling = () => {
+  if (ingestionPollTimer) return
+  ingestionPollTimer = setInterval(pollIngestionStatus, 30000)
+}
+
+const stopIngestionPolling = () => {
+  if (ingestionPollTimer) {
+    clearInterval(ingestionPollTimer)
+    ingestionPollTimer = null
+  }
+}
+
+const pollIngestionStatus = async () => {
+  if (!props.projectData?.project_id) return
+  try {
+    const res = await getProjectIngestionStatus(props.projectData.project_id)
+    if (res.success) {
+      ingestionStatus.value = res
+    }
+  } catch (err) {
+    // silent poll failure
   }
 }
 
@@ -347,6 +565,16 @@ watch(() => props.systemLogs.length, () => {
     }
   })
 })
+
+onMounted(() => {
+  if (props.currentPhase >= 2) {
+    pollIngestionStatus()
+  }
+})
+
+onUnmounted(() => {
+  stopIngestionPolling()
+})
 </script>
 
 <style scoped>
@@ -400,7 +628,7 @@ watch(() => props.systemLogs.length, () => {
   font-family: 'JetBrains Mono', monospace;
   font-size: 20px;
   font-weight: 700;
-  color: #E0E0E0;
+  color: #000;
 }
 
 .step-card.active .step-num,
@@ -797,6 +1025,162 @@ watch(() => props.systemLogs.length, () => {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Ingestion Section */
+.ingestion-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #F0F0F0;
+}
+
+.ingestion-section-header {
+  margin-bottom: 8px;
+}
+
+.ingestion-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.action-btn.secondary {
+  background: #FFF;
+  color: #333;
+  border: 1px solid #DDD;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  background: #F5F5F5;
+}
+
+.action-btn.small {
+  padding: 8px 14px;
+  font-size: 11px;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-btn.primary {
+  background: #000;
+  color: #FFF;
+  border: none;
+}
+
+.keywords-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.keyword-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #F0F0F0;
+  border: 1px solid #E0E0E0;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  color: #333;
+}
+
+.keyword-remove {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.keyword-remove:hover {
+  color: #FF5722;
+}
+
+.keyword-input-inline {
+  border: 1px dashed #DDD;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  outline: none;
+  width: 100px;
+  transition: border-color 0.2s;
+}
+
+.keyword-input-inline:focus {
+  border-color: #FF5722;
+}
+
+.ingestion-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #C62828;
+}
+
+.interval-config {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.interval-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  min-width: 50px;
+}
+
+.ingestion-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ingestion-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: #F9F9F9;
+  padding: 10px;
+  border-radius: 4px;
+}
+
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-label {
+  font-size: 9px;
+  color: #999;
+  text-transform: uppercase;
+}
+
+.status-value {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-value.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.status-value.active {
+  color: #2E7D32;
+}
+
+.status-value.inactive {
+  color: #999;
+}
 
 /* System Logs */
 .system-logs {

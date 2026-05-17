@@ -1,5 +1,6 @@
 <template>
   <div class="review-panel">
+    <IngestionStatusStrip :projectId="getWorkflowId('projectId') || ''" />
     <!-- Phase 1: Report Claim Extraction -->
     <div v-if="phase === 'extracting'" class="phase-container">
       <div class="phase-header">
@@ -221,99 +222,145 @@
             <span>{{ $t('step5.traceableReport') }}</span>
           </div>
           <h1 class="traceable-title">{{ $t('step5.enhReportTitle') }}</h1>
-          <div class="confidence-display">
-            <div class="confidence-ring">
-              <svg viewBox="0 0 120 120">
-                <circle cx="60" cy="60" r="52" fill="none" stroke="#E5E7EB" stroke-width="8"/>
-                <circle cx="60" cy="60" r="52" fill="none" :stroke="confidenceColor" stroke-width="8"
-                  stroke-linecap="round" :stroke-dasharray="confidenceDash" transform="rotate(-90 60 60)"/>
+        </div>
+
+        <!-- Section 1: 事件概述 -->
+        <div class="report-section section-overview">
+          <div class="section-header">
+            <div class="section-number">01</div>
+            <div class="section-title-group">
+              <h2 class="section-title">事件概述</h2>
+              <p class="section-subtitle">Event Overview</p>
+            </div>
+          </div>
+          <div v-if="traceableReport.question" class="question-card">
+            <div class="question-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
               </svg>
-              <div class="confidence-value">
-                <span class="conf-num">{{ overallConfidence }}</span>
-                <span class="conf-unit">%</span>
-              </div>
+              <span>{{ $t('step5.question') }}</span>
             </div>
-            <div class="confidence-meta">
-              <span class="conf-label">{{ $t('step5.overallConfidence') }}</span>
-              <span class="conf-desc">{{ confidenceDescription }}</span>
+            <p class="question-text">{{ traceableReport.question }}</p>
+          </div>
+          <div class="overview-stats">
+            <div class="stat-item" v-for="stat in evidenceSourceStats" :key="stat.type">
+              <span class="stat-value">{{ stat.count }}</span>
+              <span class="stat-label">{{ stat.label }}</span>
             </div>
           </div>
+          <!-- Overview extracted from report body -->
+          <div v-if="parsedSections[0]" class="section-body" v-html="parsedSections[0]"></div>
         </div>
 
-        <!-- Question -->
-        <div v-if="traceableReport.question" class="report-section question-section">
-          <div class="section-label">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-              <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-            <span>{{ $t('step5.question') }}</span>
+        <!-- Section 2: 多源证据链 -->
+        <div class="report-section section-evidence">
+          <div class="section-header">
+            <div class="section-number">02</div>
+            <div class="section-title-group">
+              <h2 class="section-title">多源证据链</h2>
+              <p class="section-subtitle">Multi-Source Evidence Chain</p>
+            </div>
+            <span class="badge-count" v-if="allEvidence.length">{{ allEvidence.length }}</span>
           </div>
-          <p class="question-text">{{ traceableReport.question }}</p>
-        </div>
-
-        <!-- Evidence Chain -->
-        <div v-if="traceableReport.evidence_chain?.length" class="report-section evidence-section">
-          <div class="section-label">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-            </svg>
-            <span>{{ $t('step5.evidenceChain') }}</span>
-            <span class="badge-count">{{ traceableReport.evidence_chain.length }}</span>
-          </div>
-          <div class="evidence-chain">
-            <div v-for="(ev, idx) in traceableReport.evidence_chain" :key="idx" class="evidence-item">
-              <div class="ev-marker">
-                <span class="ev-id">{{ ev.id || ('EV-' + String(idx+1).padStart(3,'0')) }}</span>
-                <div class="ev-line" v-if="idx < traceableReport.evidence_chain.length - 1"></div>
+          <div v-if="allEvidence.length" class="evidence-grid">
+            <div v-for="(ev, idx) in allEvidence" :key="idx" class="evidence-card" :class="ev.source_type">
+              <div class="ev-card-header">
+                <span class="ev-id">{{ ev.evidence_id || ev.id || ('EV-' + String(idx+1).padStart(3,'0')) }}</span>
+                <span class="ev-type-badge" :class="ev.source_type">{{ sourceTypeLabel(ev.source_type) }}</span>
               </div>
-              <div class="ev-body">
-                <p class="ev-text">{{ ev.content || ev.text || ev.description }}</p>
-                <div class="ev-meta">
-                  <span v-if="ev.source" class="ev-source">{{ ev.source }}</span>
-                  <span v-if="ev.reliability != null" class="ev-reliability" :class="getReliabilityClass(ev.reliability)">
-                    {{ $t('step5.reliability') }}: {{ ev.reliability }}%
-                  </span>
+              <p class="ev-card-text">{{ ev.evidence_text || ev.content || ev.text || ev.description }}</p>
+              <div class="ev-card-footer">
+                <span v-if="ev.source" class="ev-source-tag">{{ ev.source }}</span>
+                <div v-if="ev.reliability != null" class="reliability-bar-mini">
+                  <div class="reliability-fill" :class="getReliabilityClass(ev.reliability)" :style="{ width: ev.reliability + '%' }"></div>
                 </div>
+                <span v-if="ev.reliability != null" class="ev-reliability-num" :class="getReliabilityClass(ev.reliability)">{{ ev.reliability }}%</span>
               </div>
             </div>
           </div>
+          <div v-else-if="parsedSections[1]" class="section-body" v-html="parsedSections[1]"></div>
         </div>
 
-        <!-- Review Summary -->
-        <div v-if="reviewSummary.length" class="report-section review-summary-section">
-          <div class="section-label">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-            <span>{{ $t('step5.reviewSummary') }}</span>
-          </div>
-          <div class="review-summary-grid">
-            <div v-for="role in reviewRoles" :key="role.id" class="summary-role-card" :class="role.id">
-              <div class="summary-role-header">
-                <span class="summary-role-icon" v-html="role.icon"></span>
-                <span class="summary-role-name">{{ $t('step5.roles.' + role.id) }}</span>
-              </div>
-              <p class="summary-role-text">{{ getRoleSummary(role.id) }}</p>
+        <!-- Section 3: 分析性预测 -->
+        <div class="report-section section-prediction">
+          <div class="section-header">
+            <div class="section-number">03</div>
+            <div class="section-title-group">
+              <h2 class="section-title">分析性预测</h2>
+              <p class="section-subtitle">Analytical Prediction</p>
             </div>
           </div>
+          <div v-if="parsedSections[2]" class="section-body" v-html="parsedSections[2]"></div>
+          <div v-else-if="reportBodyHtml" class="section-body" v-html="reportBodyHtml"></div>
         </div>
 
-        <!-- Report Body -->
-        <div v-if="traceableReport.content || traceableReport.report_content" class="report-section body-section">
-          <div class="section-label">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-            <span>{{ $t('step5.reportContent') }}</span>
+        <!-- Section 4: 多角色评审与置信度 -->
+        <div class="report-section section-review">
+          <div class="section-header">
+            <div class="section-number">04</div>
+            <div class="section-title-group">
+              <h2 class="section-title">多角色评审与置信度</h2>
+              <p class="section-subtitle">Multi-Role Review & Confidence</p>
+            </div>
           </div>
-          <div class="report-body" v-html="renderReport(traceableReport.content || traceableReport.report_content)"></div>
+          <!-- Role cards grid -->
+          <div v-if="reviewRoles.length" class="role-review-grid">
+            <div v-for="role in reviewRoles" :key="role.id" class="role-review-card" :class="role.id">
+              <div class="role-review-header">
+                <span class="role-review-icon" v-html="role.icon"></span>
+                <span class="role-review-name">{{ $t('step5.roles.' + role.id) }}</span>
+                <span v-if="getRoleDecision(role.id)" class="role-decision-badge" :class="getRoleDecision(role.id)">
+                  {{ getRoleDecisionLabel(role.id) }}
+                </span>
+              </div>
+              <p class="role-review-text">{{ getRoleSummary(role.id) || ($t('step5.pendingReview')) }}</p>
+              <div v-if="getRoleConfidence(role.id) > 0" class="role-confidence-bar">
+                <div class="role-confidence-fill" :style="{ width: (getRoleConfidence(role.id) * 100) + '%' }"></div>
+              </div>
+            </div>
+          </div>
+          <div v-if="parsedSections[3]" class="section-body" v-html="parsedSections[3]"></div>
+        </div>
+
+        <!-- Section 5: 不确定性声明 + 置信度椭圆 -->
+        <div class="report-section section-uncertainty">
+          <div class="section-header">
+            <div class="section-number">05</div>
+            <div class="section-title-group">
+              <h2 class="section-title">不确定性声明</h2>
+              <p class="section-subtitle">Uncertainty Statement</p>
+            </div>
+          </div>
+          <div v-if="parsedSections[4]" class="section-body" v-html="parsedSections[4]"></div>
+
+          <!-- Ellipse Confidence Visualization -->
+          <div class="confidence-ellipse-wrapper">
+            <div class="confidence-ellipse-container">
+              <svg viewBox="0 0 300 180" class="confidence-ellipse-svg">
+                <!-- Background ellipse -->
+                <ellipse cx="150" cy="90" rx="130" ry="70" fill="none" stroke="#E5E7EB" stroke-width="3" />
+                <!-- Confidence fill ellipse -->
+                <ellipse cx="150" cy="90" :rx="confidenceEllipseRx" :ry="confidenceEllipseRy"
+                  :fill="confidenceFillColor" :opacity="0.15" />
+                <!-- Confidence stroke ellipse -->
+                <ellipse cx="150" cy="90" :rx="confidenceEllipseRx" :ry="confidenceEllipseRy"
+                  fill="none" :stroke="confidenceColor" stroke-width="3" stroke-dasharray="8 4" />
+                <!-- Center text -->
+                <text x="150" y="82" text-anchor="middle" class="ellipse-value-text">{{ overallConfidence }}%</text>
+                <text x="150" y="105" text-anchor="middle" class="ellipse-label-text">{{ confidenceDescription }}</text>
+                <!-- Tick marks -->
+                <line x1="20" y1="90" x2="30" y2="90" stroke="#D1D5DB" stroke-width="1.5" />
+                <line x1="270" y1="90" x2="280" y2="90" stroke="#D1D5DB" stroke-width="1.5" />
+                <line x1="150" y1="15" x2="150" y2="25" stroke="#D1D5DB" stroke-width="1.5" />
+                <line x1="150" y1="155" x2="150" y2="165" stroke="#D1D5DB" stroke-width="1.5" />
+                <!-- Labels -->
+                <text x="15" y="86" text-anchor="end" class="ellipse-tick-label">0</text>
+                <text x="285" y="86" text-anchor="start" class="ellipse-tick-label">100</text>
+              </svg>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -381,7 +428,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listReviewClaims, evaluateClaim, runTraceableReport, getTraceableReport, getReport } from '../api/report'
+import { listReviewClaims, evaluateClaim, runTraceableReport, getTraceableReport, getTraceableStatus, getReport } from '../api/report'
+import { getWorkflowId } from '../store/workflow'
+import IngestionStatusStrip from './IngestionStatusStrip.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -450,12 +499,14 @@ const reviewRoles = [
 const traceableReport = ref({})
 const overallConfidence = ref(0)
 const agentSteps = ref([
-  { label: 'Memory Retrieval', done: false, active: false },
-  { label: 'Graph Search', done: false, active: false },
+  { label: 'Memory Recall', done: false, active: false },
+  { label: 'Graph Retrieve', done: false, active: false },
   { label: 'Active Search', done: false, active: false },
   { label: 'Agent Interview', done: false, active: false },
-  { label: 'Review Integration', done: false, active: false },
-  { label: 'Report Generation', done: false, active: false }
+  { label: 'Evidence Trace', done: false, active: false },
+  { label: 'Draft Report', done: false, active: false },
+  { label: 'Confidence Review', done: false, active: false },
+  { label: 'Revise Report', done: false, active: false }
 ])
 
 const confidenceColor = computed(() => {
@@ -481,6 +532,116 @@ const reviewSummary = computed(() => {
   return traceableReport.value.review_results
 })
 
+// Evidence chain from report result
+const allEvidence = computed(() => {
+  const report = traceableReport.value
+  return report.evidence_chain || report.evidence_trace || []
+})
+
+// Evidence source statistics
+const evidenceSourceStats = computed(() => {
+  const evidence = allEvidence.value
+  const typeMap = {}
+  evidence.forEach(ev => {
+    const type = ev.source_type || 'unknown'
+    typeMap[type] = (typeMap[type] || 0) + 1
+  })
+  const labelMap = {
+    graph: 'Graph',
+    memory: 'Memory',
+    agent_interview: 'Interview',
+    active_search: 'Search',
+  }
+  const stats = Object.entries(typeMap).map(([type, count]) => ({
+    type,
+    count,
+    label: labelMap[type] || type,
+  }))
+  if (stats.length === 0) {
+    return [
+      { type: 'graph', count: 0, label: 'Graph' },
+      { type: 'memory', count: 0, label: 'Memory' },
+      { type: 'agent_interview', count: 0, label: 'Interview' },
+      { type: 'active_search', count: 0, label: 'Search' },
+    ]
+  }
+  return stats
+})
+
+// Parse report content into 5 sections
+const parsedSections = computed(() => {
+  const content = traceableReport.value.content || traceableReport.value.report_content || ''
+  if (!content) return {}
+
+  // Split by ## headings that match our 5 sections
+  const sectionPatterns = [
+    /##\s*1\.\s*(?:事件概述|Event Overview)/i,
+    /##\s*2\.\s*(?:多源证据链|Multi-Source Evidence Chain)/i,
+    /##\s*3\.\s*(?:分析性预测|Analytical Prediction)/i,
+    /##\s*4\.\s*(?:多角色评审与置信度|Multi-Role Review)/i,
+    /##\s*5\.\s*(?:不确定性声明|Uncertainty Statement)/i,
+  ]
+
+  const sections = {}
+  let remaining = content
+
+  for (let i = 0; i < sectionPatterns.length; i++) {
+    const match = remaining.match(sectionPatterns[i])
+    if (match) {
+      const startIdx = match.index
+      // Find the next section
+      let endIdx = remaining.length
+      for (let j = i + 1; j < sectionPatterns.length; j++) {
+        const nextMatch = remaining.substring(startIdx + match[0].length).match(sectionPatterns[j])
+        if (nextMatch) {
+          endIdx = startIdx + match[0].length + nextMatch.index
+          break
+        }
+      }
+      const sectionContent = remaining.substring(startIdx + match[0].length, endIdx).trim()
+      sections[i] = renderReport(sectionContent)
+    }
+  }
+  return sections
+})
+
+// Fallback: render entire report body if section parsing fails
+const reportBodyHtml = computed(() => {
+  const content = traceableReport.value.content || traceableReport.value.report_content || ''
+  if (!content) return ''
+  // If sections were parsed, don't show full body
+  if (Object.keys(parsedSections.value).length > 0) return ''
+  return renderReport(content)
+})
+
+// Ellipse dimensions based on confidence
+const confidenceEllipseRx = computed(() => {
+  // Scale from 40 (0%) to 130 (100%)
+  return 40 + (overallConfidence.value / 100) * 90
+})
+
+const confidenceEllipseRy = computed(() => {
+  // Scale from 22 (0%) to 70 (100%)
+  return 22 + (overallConfidence.value / 100) * 48
+})
+
+const confidenceFillColor = computed(() => {
+  if (overallConfidence.value >= 80) return '#10B981'
+  if (overallConfidence.value >= 60) return '#F59E0B'
+  return '#EF4444'
+})
+
+// Source type label helper
+const sourceTypeLabel = (type) => {
+  const labels = {
+    graph: 'Graph',
+    memory: 'Memory',
+    agent_interview: 'Interview',
+    active_search: 'Search',
+  }
+  return labels[type] || type
+}
+
 // Methods
 const getConfidenceClass = (confidence) => {
   if (confidence == null) return 'unknown'
@@ -497,12 +658,51 @@ const getReliabilityClass = (reliability) => {
 
 const getRoleSummary = (roleId) => {
   const results = traceableReport.value.review_results
-  if (!results) return ''
-  if (Array.isArray(results)) {
-    const found = results.find(r => r.role === roleId)
-    return found?.summary || found?.analysis || ''
+  if (!results || !Array.isArray(results)) return ''
+
+  // Backend structure: results[].role_reviews[] with {role, reason, support_decision}
+  for (const claimResult of results) {
+    const roleReviews = claimResult.role_reviews
+    if (Array.isArray(roleReviews)) {
+      const found = roleReviews.find(r => r.role === roleId)
+      if (found) {
+        return found.reason || found.analysis || found.summary || ''
+      }
+    }
   }
-  return results[roleId]?.summary || results[roleId]?.analysis || ''
+
+  // Fallback: flat array with {role, summary, analysis}
+  const found = results.find(r => r.role === roleId)
+  return found?.summary || found?.analysis || ''
+}
+
+const _findRoleReview = (roleId) => {
+  const results = traceableReport.value.review_results
+  if (!results || !Array.isArray(results)) return null
+  for (const claimResult of results) {
+    const roleReviews = claimResult.role_reviews
+    if (Array.isArray(roleReviews)) {
+      const found = roleReviews.find(r => r.role === roleId)
+      if (found) return found
+    }
+  }
+  return results.find(r => r.role === roleId) || null
+}
+
+const getRoleDecision = (roleId) => {
+  return _findRoleReview(roleId)?.support_decision || ''
+}
+
+const getRoleDecisionLabel = (roleId) => {
+  const decision = getRoleDecision(roleId)
+  if (decision === 'support') return '支持'
+  if (decision === 'oppose') return '反对'
+  if (decision === 'uncertain') return '不确定'
+  return ''
+}
+
+const getRoleConfidence = (roleId) => {
+  return _findRoleReview(roleId)?.confidence || 0
 }
 
 const startExtraction = async () => {
@@ -595,40 +795,92 @@ const calculateConfidence = (reviews) => {
   return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
 }
 
+const STEP_KEYS = ['memory_recall', 'graph_retrieve', 'active_search', 'interview',
+  'evidence_trace', 'draft_report', 'confidence_review', 'revise_report']
+
 const generateTraceableReport = async () => {
   generatingReport.value = true
   emit('add-log', t('step5.generatingReport'))
 
-  // Small delay to show loading state before transitioning
-  await new Promise(resolve => setTimeout(resolve, 300))
+  // Reset agent steps
+  agentSteps.value.forEach(s => { s.done = false; s.active = false })
 
   phase.value = 'generating'
 
-  // Animate agent steps
-  for (let i = 0; i < agentSteps.value.length; i++) {
-    agentSteps.value[i].active = true
-    await new Promise(resolve => setTimeout(resolve, 800))
-    agentSteps.value[i].active = false
-    agentSteps.value[i].done = true
-  }
-
   try {
+    // Start async task
     const res = await runTraceableReport({
       report_id: props.reportId,
       simulation_id: props.simulationId,
       claims: claims.value.map(c => ({ text: c.text, confidence: c.confidence, reviews: c.reviews }))
     })
 
-    if (res.success && res.data) {
-      traceableReport.value = res.data
-      overallConfidence.value = res.data.confidence || res.data.overall_confidence || calculateOverallConfidence()
-      phase.value = 'report'
-      emit('update-status', 'completed')
-      emit('add-log', t('step5.reportGenerated'))
+    if (!res.success || !res.data?.task_id) {
+      throw new Error(res.error || 'Failed to start traceable report')
     }
+
+    const taskId = res.data.task_id
+
+    // Poll for progress
+    let pollTimer = null
+    await new Promise((resolve, reject) => {
+      pollTimer = setInterval(async () => {
+        try {
+          const statusRes = await getTraceableStatus(taskId)
+          if (!statusRes.success || !statusRes.data) return
+
+          const task = statusRes.data
+          const msg = task.message || ''
+
+          // Map backend message to agent step highlighting
+          for (let i = 0; i < STEP_KEYS.length; i++) {
+            if (msg.includes(STEP_KEYS[i]) || msg.includes(agentSteps.value[i].label)) {
+              // Mark all previous steps as done
+              for (let j = 0; j < i; j++) {
+                agentSteps.value[j].active = false
+                agentSteps.value[j].done = true
+              }
+              // Mark current as active
+              agentSteps.value[i].active = true
+              agentSteps.value[i].done = false
+              break
+            }
+          }
+
+          if (task.status === 'completed') {
+            clearInterval(pollTimer)
+            // Mark all steps done
+            agentSteps.value.forEach(s => { s.active = false; s.done = true })
+
+            const result = task.result || {}
+            traceableReport.value = {
+              content: result.report || result.content || '',
+              report_content: result.report || result.content || '',
+              question: result.question || '',
+              evidence_chain: result.evidence_trace || result.evidence_chain || [],
+              review_results: result.review_result?.results || result.review_results || [],
+              confidence: result.review_result?.summary?.average_confidence || result.confidence || result.overall_confidence || 0,
+              overall_confidence: result.review_result?.summary?.average_confidence || result.overall_confidence || 0,
+            }
+            overallConfidence.value = Math.round((traceableReport.value.confidence || 0) * 100) || calculateOverallConfidence()
+            resolve()
+          } else if (task.status === 'failed') {
+            clearInterval(pollTimer)
+            reject(new Error(task.error || 'Traceable report generation failed'))
+          }
+        } catch (pollErr) {
+          clearInterval(pollTimer)
+          reject(pollErr)
+        }
+      }, 1000)
+    })
+
+    phase.value = 'report'
+    emit('update-status', 'completed')
+    emit('add-log', t('step5.reportGenerated'))
+
   } catch (err) {
     emit('add-log', t('step5.reportFailed', { error: err.message }))
-    // Show a basic report even on error
     overallConfidence.value = calculateOverallConfidence()
     traceableReport.value = {
       question: props.simulationId,
@@ -684,7 +936,29 @@ const loadOriginalReport = async () => {
     const res = await getReport(props.reportId)
     if (res.success && res.data) {
       const data = res.data
-      // Collect all section content from the original report
+
+      // Check if a traceable report already exists
+      const enhanced = data.enhanced_trace
+      if (enhanced && enhanced.report) {
+        traceableReport.value = {
+          content: enhanced.report,
+          report_content: enhanced.report,
+          question: enhanced.question || data.simulation_requirement || '',
+          evidence_chain: enhanced.evidence_trace || [],
+          review_results: enhanced.review_result?.results || [],
+          confidence: enhanced.review_result?.summary?.average_confidence || 0,
+          overall_confidence: enhanced.review_result?.summary?.average_confidence || 0,
+        }
+        overallConfidence.value = Math.round((traceableReport.value.confidence || 0) * 100) || calculateOverallConfidence()
+        agentSteps.value.forEach(s => { s.active = false; s.done = true })
+        phase.value = 'report'
+        emit('update-status', 'completed')
+        emit('add-log', t('step5.reportLoaded') || 'Traceable report loaded')
+        originalReportLoading.value = false
+        return
+      }
+
+      // Otherwise load the original Step4 report
       const sections = data.sections || data.outline?.sections || []
       if (sections.length > 0) {
         originalReport.value = sections.map(s => `## ${s.title}\n\n${s.content || ''}`).join('\n\n')
@@ -1381,159 +1655,237 @@ onMounted(() => {
 /* ========== Report Phase ========== */
 .report-phase {
   padding: 0 !important;
+  background: linear-gradient(180deg, #F8FAFC 0%, #EFF6FF 100%);
 }
 
 .report-wrapper {
   max-width: 900px;
   margin: 0 auto;
-  padding: 40px 32px;
+  padding: 40px 32px 60px;
 }
 
 /* Traceable Header */
 .traceable-header {
   text-align: center;
   margin-bottom: 40px;
-  padding-bottom: 32px;
-  border-bottom: 1px solid #E5E7EB;
+  padding: 40px 32px;
+  background: linear-gradient(135deg, #1E3A5F 0%, #2563EB 100%);
+  border-radius: 20px;
+  color: #FFF;
 }
 
 .report-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  background: linear-gradient(135deg, #DBEAFE, #BFDBFE);
-  color: #1D4ED8;
+  padding: 6px 16px;
+  background: rgba(255,255,255,0.15);
+  color: #FFF;
   border-radius: 20px;
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 16px;
+  backdrop-filter: blur(4px);
 }
 
 .traceable-title {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
-  color: #111827;
-  margin: 0 0 24px 0;
+  color: #FFF;
+  margin: 0;
   line-height: 1.3;
 }
 
-/* Confidence Display */
-.confidence-display {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 24px;
-}
-
-.confidence-ring {
-  position: relative;
-  width: 100px;
-  height: 100px;
-}
-
-.confidence-ring svg {
-  width: 100%;
-  height: 100%;
-}
-
-.confidence-value {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: baseline;
-}
-
-.conf-num {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 28px;
-  font-weight: 800;
-  color: #111827;
-}
-
-.conf-unit {
-  font-size: 14px;
-  color: #9CA3AF;
-  margin-left: 2px;
-}
-
-.confidence-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.conf-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.conf-desc {
-  font-size: 13px;
-  color: #6B7280;
-}
-
-/* Report Sections */
+/* ========== 5-Section Report Layout ========== */
 .report-section {
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   background: #FFFFFF;
   border: 1px solid #E5E7EB;
   border-radius: 16px;
-  padding: 24px;
+  padding: 28px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: box-shadow 0.2s;
 }
 
-.section-label {
+.report-section:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+.section-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  font-size: 14px;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.section-number {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 20px;
+  font-weight: 800;
+  color: #CBD5E1;
+  line-height: 1;
+  min-width: 36px;
+}
+
+.section-title-group {
+  flex: 1;
+}
+
+.section-title {
+  font-size: 18px;
   font-weight: 700;
-  color: #374151;
+  color: #111827;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.section-subtitle {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin: 2px 0 0 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.badge-count {
+.section-body {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #374151;
+}
+
+.section-body :deep(h2) {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 20px 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.section-body :deep(h3) {
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+  margin: 16px 0 8px 0;
+  padding-left: 10px;
+  border-left: 3px solid #3B82F6;
+}
+
+.section-body :deep(strong) {
+  font-weight: 600;
+  color: #111827;
+}
+
+.section-body :deep(.ev-ref) {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
+  font-weight: 700;
+  color: #2563EB;
+  background: #EFF6FF;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.badge-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
   background: #EFF6FF;
   color: #2563EB;
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* Section 1: Overview */
+.question-card {
+  background: linear-gradient(135deg, #EFF6FF, #DBEAFE);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.question-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563EB;
+  margin-bottom: 8px;
 }
 
 .question-text {
   font-size: 16px;
-  color: #1F2937;
-  line-height: 1.7;
+  color: #1E3A5F;
+  line-height: 1.6;
   margin: 0;
-  padding: 16px;
-  background: #F9FAFB;
-  border-radius: 8px;
-  border-left: 4px solid #3B82F6;
+  font-weight: 500;
 }
 
-/* Evidence Chain */
-.evidence-chain {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.evidence-item {
+.overview-stats {
   display: flex;
   gap: 16px;
+  margin-top: 12px;
 }
 
-.ev-marker {
+.stat-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 60px;
+  padding: 12px 20px;
+  background: #F9FAFB;
+  border-radius: 10px;
+  border: 1px solid #F3F4F6;
+  min-width: 72px;
+}
+
+.stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Section 2: Evidence Grid */
+.evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.evidence-card {
+  padding: 14px 16px;
+  background: #FAFAFA;
+  border: 1px solid #F3F4F6;
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.evidence-card:hover {
+  border-color: #D1D5DB;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.evidence-card.graph { border-left: 3px solid #3B82F6; }
+.evidence-card.memory { border-left: 3px solid #8B5CF6; }
+.evidence-card.agent_interview { border-left: 3px solid #F59E0B; }
+.evidence-card.active_search { border-left: 3px solid #10B981; }
+
+.ev-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
 }
 
 .ev-id {
@@ -1542,155 +1894,202 @@ onMounted(() => {
   font-weight: 700;
   color: #2563EB;
   background: #EFF6FF;
-  padding: 3px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
-  white-space: nowrap;
 }
 
-.ev-line {
-  width: 2px;
-  flex: 1;
-  background: linear-gradient(180deg, #93C5FD, #DBEAFE);
-  margin: 4px 0;
+.ev-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
 }
 
-.ev-body {
-  flex: 1;
-  padding-bottom: 20px;
-}
+.ev-type-badge.graph { background: #DBEAFE; color: #1D4ED8; }
+.ev-type-badge.memory { background: #EDE9FE; color: #6D28D9; }
+.ev-type-badge.agent_interview { background: #FEF3C7; color: #B45309; }
+.ev-type-badge.active_search { background: #D1FAE5; color: #047857; }
 
-.ev-text {
-  font-size: 14px;
+.ev-card-text {
+  font-size: 13px;
   color: #374151;
-  line-height: 1.7;
-  margin: 0 0 8px 0;
+  line-height: 1.6;
+  margin: 0 0 10px 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.ev-meta {
+.ev-card-footer {
   display: flex;
-  gap: 12px;
   align-items: center;
+  gap: 8px;
 }
 
-.ev-source {
-  font-size: 12px;
+.ev-source-tag {
+  font-size: 11px;
   color: #6B7280;
   background: #F3F4F6;
   padding: 2px 8px;
   border-radius: 4px;
 }
 
-.ev-reliability {
+.reliability-bar-mini {
+  flex: 1;
+  height: 3px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.reliability-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.reliability-fill.high { background: #10B981; }
+.reliability-fill.medium { background: #F59E0B; }
+.reliability-fill.low { background: #EF4444; }
+
+.ev-reliability-num {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
 }
 
-.ev-reliability.high { background: #D1FAE5; color: #059669; }
-.ev-reliability.medium { background: #FEF3C7; color: #D97706; }
-.ev-reliability.low { background: #FEE2E2; color: #DC2626; }
+.ev-reliability-num.high { color: #059669; }
+.ev-reliability-num.medium { color: #D97706; }
+.ev-reliability-num.low { color: #DC2626; }
 
-/* Review Summary Grid */
-.review-summary-grid {
+/* Section 4: Role Review Grid */
+.role-review-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
+  margin-bottom: 16px;
 }
 
-.summary-role-card {
+.role-review-card {
   padding: 14px;
-  border-radius: 10px;
   background: #FAFAFA;
-  border: 1px solid #E5E7EB;
+  border: 1px solid #F3F4F6;
+  border-radius: 10px;
+  transition: all 0.2s;
 }
 
-.summary-role-card.fact_checker { border-left: 3px solid #3B82F6; }
-.summary-role-card.supporter { border-left: 3px solid #10B981; }
-.summary-role-card.opponent { border-left: 3px solid #EF4444; }
-.summary-role-card.risk_reviewer { border-left: 3px solid #F59E0B; }
-.summary-role-card.evidence_organizer { border-left: 3px solid #8B5CF6; }
+.role-review-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
 
-.summary-role-header {
+.role-review-card.fact_checker { border-left: 3px solid #3B82F6; }
+.role-review-card.supporter { border-left: 3px solid #10B981; }
+.role-review-card.opponent { border-left: 3px solid #EF4444; }
+.role-review-card.risk_reviewer { border-left: 3px solid #F59E0B; }
+.role-review-card.evidence_organizer { border-left: 3px solid #8B5CF6; }
+
+.role-review-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
-.summary-role-icon { font-size: 14px; }
+.role-review-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
 
-.summary-role-name {
-  font-size: 12px;
+.role-review-card.fact_checker .role-review-icon { background: #DBEAFE; color: #2563EB; }
+.role-review-card.supporter .role-review-icon { background: #D1FAE5; color: #059669; }
+.role-review-card.opponent .role-review-icon { background: #FEE2E2; color: #DC2626; }
+.role-review-card.risk_reviewer .role-review-icon { background: #FEF3C7; color: #D97706; }
+.role-review-card.evidence_organizer .role-review-icon { background: #EDE9FE; color: #7C3AED; }
+
+.role-review-name {
+  font-size: 13px;
   font-weight: 600;
   color: #374151;
 }
 
-.summary-role-text {
+.role-review-text {
   font-size: 12px;
   color: #6B7280;
   line-height: 1.5;
   margin: 0;
 }
 
-/* Report Body */
-.report-body {
-  font-size: 14.5px;
-  line-height: 1.85;
-  color: #1F2937;
-}
-
-.report-body :deep(.md-h1) {
-  font-size: 24px;
-  font-weight: 800;
-  color: #111827;
-  margin: 24px 0 16px 0;
-  padding-bottom: 8px;
-  border-bottom: 2px solid #E5E7EB;
-}
-
-.report-body :deep(.md-h2) {
-  font-size: 20px;
-  font-weight: 700;
-  color: #1F2937;
-  margin: 20px 0 12px 0;
-  padding-bottom: 6px;
-  border-bottom: 2px solid #E5E7EB;
-}
-
-.report-body :deep(.md-h3) {
-  font-size: 16px;
-  font-weight: 700;
-  color: #374151;
-  margin: 16px 0 8px 0;
-  padding-left: 12px;
-  border-left: 3px solid #3B82F6;
-}
-
-.report-body :deep(strong) {
-  font-weight: 600;
-  color: #111827;
-}
-
-.report-body :deep(.inline-code) {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  background: #F3F4F6;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #E11D48;
-}
-
-.report-body :deep(.ev-ref) {
-  font-family: 'JetBrains Mono', monospace;
+.role-decision-badge {
   font-size: 11px;
-  font-weight: 700;
-  color: #2563EB;
-  background: #EFF6FF;
-  padding: 1px 6px;
-  border-radius: 4px;
-  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.role-decision-badge.support { background: #D1FAE5; color: #059669; }
+.role-decision-badge.oppose { background: #FEE2E2; color: #DC2626; }
+.role-decision-badge.uncertain { background: #FEF3C7; color: #D97706; }
+
+.role-confidence-bar {
+  height: 4px;
+  background: #E5E7EB;
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.role-confidence-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3B82F6, #10B981);
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* Section 5: Ellipse Confidence */
+.confidence-ellipse-wrapper {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.confidence-ellipse-container {
+  width: 100%;
+  max-width: 380px;
+  background: linear-gradient(135deg, #F8FAFC, #EFF6FF);
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #E5E7EB;
+}
+
+.confidence-ellipse-svg {
+  width: 100%;
+  height: auto;
+}
+
+.ellipse-value-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 32px;
+  font-weight: 800;
+  fill: #111827;
+}
+
+.ellipse-label-text {
+  font-size: 13px;
+  fill: #6B7280;
+  font-weight: 500;
+}
+
+.ellipse-tick-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: #9CA3AF;
 }
 
 /* ========== Original Report Section ========== */

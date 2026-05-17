@@ -13,7 +13,9 @@ import json
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
+import httpx
 from zep_cloud.client import Zep
+from zep_cloud.core.api_error import ApiError
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -427,7 +429,10 @@ class ZepToolsService:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY 未配置")
         
-        self.client = Zep(api_key=self.api_key)
+        self.client = Zep(api_key=self.api_key, httpx_client=httpx.Client(
+            proxy=None,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+        ))
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
         logger.info(t("console.zepToolsInitialized"))
@@ -440,25 +445,50 @@ class ZepToolsService:
         return self._llm_client
     
     def _call_with_retry(self, func, operation_name: str, max_retries: int = None):
-        """带重试机制的API调用"""
+        """带重试机制的API调用，429速率限制时读取retry-after"""
         max_retries = max_retries or self.MAX_RETRIES
         last_exception = None
         delay = self.RETRY_DELAY
-        
+
         for attempt in range(max_retries):
             try:
                 return func()
-            except Exception as e:
+            except ApiError as e:
                 last_exception = e
-                if attempt < max_retries - 1:
+                if getattr(e, 'status_code', None) == 429 and attempt < max_retries - 1:
+                    retry_after = 20
+                    try:
+                        headers = getattr(e, 'headers', None) or {}
+                        if 'retry-after' in headers:
+                            retry_after = int(headers['retry-after'])
+                    except Exception:
+                        pass
                     logger.warning(
-                        t("console.zepRetryAttempt", operation=operation_name, attempt=attempt + 1, error=str(e)[:100], delay=f"{delay:.1f}")
+                        f"Zep {operation_name} rate limited (429), retrying after {retry_after}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(retry_after)
+                    delay = max(delay, retry_after)
+                elif attempt < max_retries - 1:
+                    logger.warning(
+                        f"Zep {operation_name} error {getattr(e, 'status_code', '?')}: {str(e)[:100]}, "
+                        f"retrying in {delay:.1f}s..."
                     )
                     time.sleep(delay)
                     delay *= 2
                 else:
-                    logger.error(t("console.zepAllRetriesFailed", operation=operation_name, retries=max_retries, error=str(e)))
-        
+                    logger.error(f"Zep {operation_name} failed after {max_retries} attempts: {str(e)}")
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Zep {operation_name} attempt {attempt + 1} failed: {str(e)[:100]}, retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(f"Zep {operation_name} failed after {max_retries} attempts: {str(e)}")
+
         raise last_exception
     
     def search_graph(

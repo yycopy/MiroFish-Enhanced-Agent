@@ -1,5 +1,6 @@
 <template>
   <div class="report-panel">
+    <IngestionStatusStrip :projectId="getWorkflowId('projectId') || ''" />
     <!-- Main Split Layout -->
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
@@ -394,6 +395,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } f
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog } from '../api/report'
+import { getWorkflowId } from '../store/workflow'
+import IngestionStatusStrip from './IngestionStatusStrip.vue'
 
 const router = useRouter()
 const { t } = useI18n()

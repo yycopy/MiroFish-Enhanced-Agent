@@ -5,8 +5,10 @@ LLM客户端封装
 
 import json
 import re
+import time
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
+from openai import RateLimitError
 
 from ..config import Config
 
@@ -36,6 +38,29 @@ class LLMClient:
             max_retries=Config.LLM_MAX_RETRIES if max_retries is None else max_retries,
         )
     
+    def _call_with_rate_limit_retry(self, **kwargs):
+        """调用LLM，遇到429速率限制时根据retry-after自动重试。"""
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except RateLimitError as exc:
+                if attempt >= max_retries:
+                    raise
+                # 从异常中提取 retry-after
+                retry_after = 20  # 默认等待20秒
+                try:
+                    headers = getattr(exc.response, 'headers', None) if hasattr(exc, 'response') and exc.response else None
+                    if headers and 'retry-after' in headers:
+                        retry_after = int(headers['retry-after'])
+                except Exception:
+                    pass
+                import logging
+                logging.getLogger('mirofish.llm').warning(
+                    f"LLM 429 rate limited, retrying after {retry_after}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(retry_after)
+
     def chat(
         self,
         messages: List[Dict[str, str]],
@@ -45,13 +70,13 @@ class LLMClient:
     ) -> str:
         """
         发送聊天请求
-        
+
         Args:
             messages: 消息列表
             temperature: 温度参数
             max_tokens: 最大token数
             response_format: 响应格式（如JSON模式）
-            
+
         Returns:
             模型响应文本
         """
@@ -61,11 +86,11 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        
+
         if response_format:
             kwargs["response_format"] = response_format
-        
-        response = self.client.chat.completions.create(**kwargs)
+
+        response = self._call_with_rate_limit_retry(**kwargs)
         content = response.choices[0].message.content
         # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()

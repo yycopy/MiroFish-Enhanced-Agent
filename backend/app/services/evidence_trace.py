@@ -1,6 +1,16 @@
 """Evidence trace builder for traceable prediction reports."""
 
+import hashlib
 from typing import Any, Dict, List
+
+
+# Reliability scores by source type (0-100)
+_SOURCE_RELIABILITY = {
+    "graph": 85,          # Structured knowledge graph
+    "memory": 75,         # Long-term memory from past data
+    "active_search": 65,  # External search results
+    "agent_interview": 50, # Agent opinions, not facts
+}
 
 
 class EvidenceTraceBuilder:
@@ -16,8 +26,14 @@ class EvidenceTraceBuilder:
         self._add_search(rows, context.get("active_search_used") or [], question)
         self._add_interviews(rows, context.get("agent_interviews") or [], question)
 
+        # Cross-source deduplication
+        rows = self._deduplicate(rows)
+
+        # Assign IDs and compute reliability
         for index, row in enumerate(rows, 1):
             row["evidence_id"] = f"ev_{index:03d}"
+            row["reliability"] = self._compute_reliability(row)
+
         return rows
 
     def _add_memory(self, rows: List[Dict[str, Any]], items: List[Dict[str, Any]], question: str) -> None:
@@ -108,6 +124,48 @@ class EvidenceTraceBuilder:
             )
 
     @staticmethod
+    def _deduplicate(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove near-duplicate evidence based on text fingerprint."""
+        seen_hashes = set()
+        unique_rows = []
+        for row in rows:
+            text = row.get("evidence_text", "")
+            # Normalize whitespace and create fingerprint
+            normalized = " ".join(text.lower().split())
+            # Use first 200 chars for fingerprint to catch near-duplicates
+            fingerprint = hashlib.md5(normalized[:200].encode()).hexdigest()
+            if fingerprint not in seen_hashes:
+                seen_hashes.add(fingerprint)
+                unique_rows.append(row)
+        return unique_rows
+
+    @staticmethod
+    def _compute_reliability(row: Dict[str, Any]) -> int:
+        """Compute reliability score for an evidence row (0-100)."""
+        source_type = row.get("source_type", "")
+        base = _SOURCE_RELIABILITY.get(source_type, 50)
+
+        # Boost for items with URLs (verifiable)
+        if row.get("url"):
+            base = min(100, base + 10)
+
+        # Boost for items with publish_time (temporal context)
+        if row.get("publish_time"):
+            base = min(100, base + 5)
+
+        # Boost for graph items with specific relations
+        metadata = row.get("metadata", {})
+        if source_type == "graph" and metadata.get("relation"):
+            base = min(100, base + 5)
+
+        # Reduce for very short evidence (less informative)
+        text_len = len(row.get("evidence_text", ""))
+        if text_len < 20:
+            base = max(0, base - 15)
+
+        return base
+
+    @staticmethod
     def _row(
         *,
         evidence_text: str,
@@ -130,6 +188,7 @@ class EvidenceTraceBuilder:
             "related_claim": related_claim or "",
             "used_in_section": used_in_section,
             "metadata": metadata or {},
+            "reliability": 0,  # computed later
         }
 
     @staticmethod

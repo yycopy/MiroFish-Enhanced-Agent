@@ -1,19 +1,6 @@
 <template>
   <div class="simulation-panel">
-    <!-- Ingestion Status Strip -->
-    <div v-if="ingestionStatus" class="ingestion-strip" :class="{ active: ingestionStatus.active }">
-      <span class="ingestion-strip-icon">{{ ingestionStatus.active ? '⬤' : '○' }}</span>
-      <span class="ingestion-strip-label">{{ $t('step3.ingestionStripLabel') }}</span>
-      <span class="ingestion-strip-state">{{ ingestionStatus.active ? $t('step3.ingestionCollecting') : $t('step3.ingestionIdle') }}</span>
-      <span v-if="ingestionStatus.active" class="ingestion-strip-detail">
-        {{ $t('step3.ingestionRunN', { n: ingestionStatus.total_runs || 0 }) }} &middot; {{ (ingestionStatus.keywords || []).join(', ') }}
-      </span>
-      <button
-        v-if="!ingestionStatus.active"
-        class="ingestion-strip-btn"
-        @click="fetchIngestionStatus()"
-      >{{ $t('common.refresh') }}</button>
-    </div>
+    <IngestionStatusStrip :projectId="props.projectData?.project_id || ''" />
 
     <!-- Top Control Bar -->
     <div class="control-bar">
@@ -308,11 +295,11 @@ import {
   startSimulation,
   stopSimulation,
   getRunStatus,
-  getRunStatusDetail,
-  stopProjectIngestion,
-  getProjectIngestionStatus
+  getRunStatusDetail
 } from '../api/simulation'
 import { generateReport } from '../api/report'
+import { saveWorkflowId } from '../store/workflow'
+import IngestionStatusStrip from './IngestionStatusStrip.vue'
 
 const { t } = useI18n()
 
@@ -440,8 +427,6 @@ const doStartSimulation = async () => {
       
       startStatusPolling()
       startDetailPolling()
-      fetchIngestionStatus()
-      startIngestionPolling()
     } else {
       startError.value = res.error || '启动失败'
       addLog(t('log.startFailed', { error: res.error || t('common.unknownError') }))
@@ -470,7 +455,6 @@ const handleStopSimulation = async () => {
       addLog(t('log.simStoppedSuccess'))
       phase.value = 2
       stopPolling()
-      handleStopIngestionForSim()
       emit('update-status', 'completed')
     } else {
       addLog(t('log.stopFailed', { error: res.error || t('common.unknownError') }))
@@ -485,44 +469,6 @@ const handleStopSimulation = async () => {
 // 轮询状态
 let statusTimer = null
 let detailTimer = null
-let ingestionPollTimer = null
-
-// 采集状态
-const ingestionStatus = ref(null)
-
-const startIngestionPolling = () => {
-  if (ingestionPollTimer) return
-  ingestionPollTimer = setInterval(fetchIngestionStatus, 30000)
-}
-
-const stopIngestionPolling = () => {
-  if (ingestionPollTimer) {
-    clearInterval(ingestionPollTimer)
-    ingestionPollTimer = null
-  }
-}
-
-const fetchIngestionStatus = async () => {
-  if (!props.projectData?.project_id) return
-  try {
-    const res = await getProjectIngestionStatus(props.projectData.project_id)
-    if (res.success) {
-      ingestionStatus.value = res
-    }
-  } catch {
-    // silent
-  }
-}
-
-const handleStopIngestionForSim = async () => {
-  if (!props.projectData?.project_id) return
-  try {
-    await stopProjectIngestion(props.projectData.project_id)
-    ingestionStatus.value = null
-  } catch {
-    // silent
-  }
-}
 
 const startStatusPolling = () => {
   statusTimer = setInterval(fetchRunStatus, 2000)
@@ -541,7 +487,6 @@ const stopPolling = () => {
     clearInterval(detailTimer)
     detailTimer = null
   }
-  stopIngestionPolling()
 }
 
 // 追踪各平台的上一次轮次，用于检测变化并输出日志
@@ -584,7 +529,6 @@ const fetchRunStatus = async () => {
         addLog(t('log.simCompleted'))
         phase.value = 2
         stopPolling()
-        handleStopIngestionForSim()
         emit('update-status', 'completed')
       }
     }
@@ -726,6 +670,8 @@ const handleNextStep = async () => {
       const reportId = res.data.report_id
       addLog(t('log.reportGenTaskStarted', { reportId }))
       
+      // 保存 reportId 到 sessionStorage 供步骤导航使用
+      saveWorkflowId('reportId', reportId)
       // 跳转到报告页面
       router.push({ name: 'Report', params: { reportId } })
     } else {
@@ -771,73 +717,6 @@ onUnmounted(() => {
 }
 
 /* --- Control Bar --- */
-/* Ingestion Status Strip */
-.ingestion-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  background: #F8FAFC;
-  border-bottom: 1px solid #E2E8F0;
-  font-size: 11px;
-}
-
-.ingestion-strip.active {
-  background: #ECFDF5;
-  border-bottom-color: #A7F3D0;
-}
-
-.ingestion-strip-icon {
-  font-size: 8px;
-  color: #94A3B8;
-}
-
-.ingestion-strip.active .ingestion-strip-icon {
-  color: #059669;
-}
-
-.ingestion-strip-label {
-  font-weight: 600;
-  color: #64748B;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.ingestion-strip-state {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: #94A3B8;
-}
-
-.ingestion-strip.active .ingestion-strip-state {
-  color: #059669;
-}
-
-.ingestion-strip-detail {
-  flex: 1;
-  font-family: 'JetBrains Mono', monospace;
-  color: #64748B;
-  font-size: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ingestion-strip-btn {
-  background: none;
-  border: 1px solid #E2E8F0;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 10px;
-  color: #64748B;
-  cursor: pointer;
-}
-
-.ingestion-strip-btn:hover {
-  border-color: #94A3B8;
-  color: #333;
-}
-
 .control-bar {
   background: #FFF;
   padding: 12px 24px;

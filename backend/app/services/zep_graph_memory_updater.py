@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from queue import Queue, Empty
 
+import httpx
 from zep_cloud.client import Zep
 
 from ..config import Config
@@ -243,7 +244,10 @@ class ZepGraphMemoryUpdater:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY未配置")
         
-        self.client = Zep(api_key=self.api_key)
+        self.client = Zep(api_key=self.api_key, httpx_client=httpx.Client(
+            proxy=None,
+            timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+        ))
         
         # 活动队列
         self._activity_queue: Queue = Queue()

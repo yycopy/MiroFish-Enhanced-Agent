@@ -1,5 +1,6 @@
 <template>
   <div class="interaction-panel">
+    <IngestionStatusStrip :projectId="getWorkflowId('projectId') || ''" />
     <!-- Main Split Layout -->
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
@@ -445,6 +446,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { chatWithReport, getReport, getAgentLog, listMemoryItems } from '../api/report'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { getWorkflowId } from '../store/workflow'
+import IngestionStatusStrip from './IngestionStatusStrip.vue'
 
 const { t } = useI18n()
 

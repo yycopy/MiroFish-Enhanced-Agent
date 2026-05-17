@@ -22,12 +22,12 @@ class ClaimSplitter:
         if not text:
             return []
 
-        if self._missing_llm_config():
-            raise RuntimeError("LLM_API_KEY or OPENAI_API_KEY is required for claim splitting")
-        try:
-            return self._split_with_llm(text)
-        except Exception:
-            return self._split_with_rules(text)
+        if not self._missing_llm_config():
+            try:
+                return self._split_with_llm(text)
+            except Exception:
+                pass
+        return self._split_with_rules(text)
 
     def _missing_llm_config(self) -> bool:
         """Return true when the LLM key is empty or still a placeholder."""

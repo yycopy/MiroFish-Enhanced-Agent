@@ -23,10 +23,7 @@
       <div class="header-right">
         <LanguageSwitcher />
         <div class="step-divider"></div>
-        <div class="workflow-step">
-          <span class="step-num">Step 2/6</span>
-          <span class="step-name">{{ $tm('main.stepNames')[1] }}</span>
-        </div>
+        <StepNav :currentStep="2" :fullyCompleted="simCompleted" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -73,6 +70,8 @@ import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import StepNav from '../components/StepNav.vue'
+import { saveWorkflowId, markStepCompleted, setCurrentStep, isSimulationCompleted, markSimulationCompleted } from '../store/workflow'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -94,6 +93,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+const simCompleted = computed(() => isSimulationCompleted(currentSimulationId.value))
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -249,6 +249,16 @@ const loadSimulationData = async () => {
     if (simRes.success && simRes.data) {
       const simData = simRes.data
 
+      // 保存 ID 到 sessionStorage
+      saveWorkflowId('simulationId', currentSimulationId.value)
+      if (simData.project_id) saveWorkflowId('projectId', simData.project_id)
+      markStepCompleted(2)
+
+      // 如果模拟已完成，标记完成状态以允许步骤自由切换
+      if (simData.status === 'completed') {
+        markSimulationCompleted(currentSimulationId.value)
+      }
+
       // 获取 project 信息
       if (simData.project_id) {
         const projRes = await getProject(simData.project_id)
@@ -292,6 +302,7 @@ const refreshGraph = () => {
 }
 
 onMounted(async () => {
+  setCurrentStep(2)
   addLog(t('log.simViewInit'))
   
   // 检查并关闭正在运行的模拟（用户从 Step 3 返回时）

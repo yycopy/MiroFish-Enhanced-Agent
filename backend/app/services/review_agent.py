@@ -101,6 +101,7 @@ class ReviewAgent:
         supporting = evidence_slices.get("supporting_evidence", []) or []
         opposing = evidence_slices.get("opposing_evidence", []) or []
         neutral = evidence_slices.get("neutral_evidence", []) or []
+        all_evidence = supporting + opposing + neutral
 
         if opposing:
             base_decision = "oppose"
@@ -111,35 +112,75 @@ class ReviewAgent:
 
         confidence = 0.35 + min(0.25, len(supporting) * 0.08) - min(0.2, len(opposing) * 0.08)
         confidence = max(0.15, min(0.65, confidence))
-        risk_notes = [
-            f"llm review fallback used: {reason}",
-            "treat this review as conservative because role prompts were not executed by the model",
-        ]
-        if not supporting:
-            risk_notes.append("no supporting evidence found")
-        if opposing:
-            risk_notes.append("opposing evidence exists")
 
         key_evidence = [
             str(item.get("text") or item.get("evidence_text") or item.get("summary") or item)[:180]
-            for item in (supporting or opposing or neutral)[:3]
+            for item in all_evidence[:5]
         ]
+
+        claim_short = (claim or "")[:60]
+        ev_count = len(all_evidence)
+        sup_count = len(supporting)
+        opp_count = len(opposing)
+
+        # Role-specific review reasons
+        role_reasons = {
+            "fact_checker": (
+                f"基于现有 {ev_count} 条证据进行基础事实核查。"
+                f"其中 {sup_count} 条支持，{opp_count} 条反对。"
+                + ("证据较充分。" if sup_count >= 2 else "证据数量不足，建议谨慎对待。")
+            ),
+            "supporter": (
+                f"从支持角度分析，找到 {sup_count} 条支持性证据。"
+                + (f"主要支持依据来自 {len(key_evidence)} 条关键证据。" if sup_count > 0
+                   else "暂未找到直接支持该论断的证据。")
+            ),
+            "opponent": (
+                f"从反对角度审视，发现 {opp_count} 条反对证据。"
+                + ("存在明确的反面论据，需要进一步验证。" if opp_count > 0
+                   else "未发现直接反驳证据，但缺乏充分验证。")
+            ),
+            "risk_reviewer": (
+                f"风险评估：当前证据链包含 {ev_count} 条证据。"
+                + ("反对证据的存在增加了预测风险。" if opp_count > 0
+                   else "证据来源类型覆盖" + ("较全面。" if ev_count >= 3 else "有限，存在信息不完整的风险。"))
+            ),
+            "evidence_organizer": (
+                f"证据组织评估：共收集 {ev_count} 条证据，"
+                f"其中支持类 {sup_count} 条、反对类 {opp_count} 条、中立类 {len(neutral)} 条。"
+                + ("证据结构较完整。" if ev_count >= 3 else "证据链覆盖不足，建议补充更多来源。")
+            ),
+        }
+
+        risk_notes = [
+            f"LLM评审不可用，已启用规则回退: {reason[:100]}",
+            "此为基础分析，非完整LLM评审结果",
+        ]
+        if not supporting:
+            risk_notes.append("未找到支持性证据")
+        if opposing:
+            risk_notes.append(f"存在 {opp_count} 条反对证据")
 
         reviews = []
         for role in REVIEW_ROLES:
             decision = base_decision
+            role_confidence = confidence
             if role == "risk_reviewer":
                 decision = "uncertain"
+                role_confidence = max(0.15, confidence - 0.1)
             if role == "opponent" and not opposing:
                 decision = "uncertain"
+            if role == "supporter" and not supporting:
+                decision = "uncertain"
+                role_confidence = max(0.15, confidence - 0.15)
             reviews.append(
                 {
                     "role": role,
                     "support_decision": decision,
-                    "reason": f"Fallback review for claim: {claim}",
+                    "reason": role_reasons.get(role, f"规则回退评审: {claim_short}"),
                     "key_evidence": key_evidence,
                     "risk_notes": risk_notes,
-                    "confidence": round(confidence, 4),
+                    "confidence": round(role_confidence, 4),
                 }
             )
         return reviews

@@ -10,8 +10,10 @@ import threading
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
+import httpx
 from zep_cloud.client import Zep
 from zep_cloud import EpisodeData, EntityEdgeSourceTarget
+from zep_cloud.core.api_error import ApiError
 
 from ..config import Config
 from ..models.task import TaskManager, TaskStatus
@@ -48,9 +50,37 @@ class GraphBuilderService:
         if not self.api_key:
             raise ValueError("ZEP_API_KEY 未配置")
         
-        self.client = Zep(api_key=self.api_key)
+        self.client = Zep(
+            api_key=self.api_key,
+            httpx_client=httpx.Client(
+                proxy=None,
+                timeout=httpx.Timeout(connect=10, read=60, write=10, pool=10),
+            )
+        )
         self.task_manager = TaskManager()
-    
+
+    def _call_with_retry(self, func, *args, max_retries=3, **kwargs):
+        """调用Zep API，遇到429速率限制时根据retry-after自动重试。"""
+        for attempt in range(max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except ApiError as exc:
+                if exc.status_code == 429 and attempt < max_retries:
+                    retry_after = 30
+                    try:
+                        headers = exc.headers or {}
+                        if 'retry-after' in headers:
+                            retry_after = int(headers['retry-after'])
+                    except Exception:
+                        pass
+                    import logging
+                    logging.getLogger('mirofish.zep').warning(
+                        f'Zep 429 rate limit, retrying in {retry_after}s (attempt {attempt + 1}/{max_retries})'
+                    )
+                    time.sleep(retry_after)
+                else:
+                    raise
+
     def build_graph_async(
         self,
         text: str,
@@ -193,8 +223,9 @@ class GraphBuilderService:
     def create_graph(self, name: str) -> str:
         """创建Zep图谱（公开方法）"""
         graph_id = f"mirofish_{uuid.uuid4().hex[:16]}"
-        
-        self.client.graph.create(
+
+        self._call_with_retry(
+            self.client.graph.create,
             graph_id=graph_id,
             name=name,
             description="MiroFish Social Simulation Graph"
@@ -285,7 +316,8 @@ class GraphBuilderService:
         
         # 调用Zep API设置本体
         if entity_types or edge_definitions:
-            self.client.graph.set_ontology(
+            self._call_with_retry(
+                self.client.graph.set_ontology,
                 graph_ids=[graph_id],
                 entities=entity_types if entity_types else None,
                 edges=edge_definitions if edge_definitions else None,
@@ -322,7 +354,8 @@ class GraphBuilderService:
             
             # 发送到Zep
             try:
-                batch_result = self.client.graph.add_batch(
+                batch_result = self._call_with_retry(
+                    self.client.graph.add_batch,
                     graph_id=graph_id,
                     episodes=episodes
                 )

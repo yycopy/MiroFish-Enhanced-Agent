@@ -1672,11 +1672,12 @@ class SimulationRunner:
             return []
         
         results = []
-        
+
+        conn = None
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=5.0)
             cursor = conn.cursor()
-            
+
             if agent_id is not None:
                 cursor.execute("""
                     SELECT user_id, info, created_at
@@ -1693,13 +1694,13 @@ class SimulationRunner:
                     ORDER BY created_at DESC
                     LIMIT ?
                 """, (limit,))
-            
+
             for user_id, info_json, created_at in cursor.fetchall():
                 try:
                     info = json.loads(info_json) if info_json else {}
                 except json.JSONDecodeError:
                     info = {"raw": info_json}
-                
+
                 results.append({
                     "agent_id": user_id,
                     "response": info.get("response", info),
@@ -1707,11 +1708,15 @@ class SimulationRunner:
                     "timestamp": created_at,
                     "platform": platform_name
                 })
-            
-            conn.close()
-            
+
         except Exception as e:
             logger.error(f"读取Interview历史失败 ({platform_name}): {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         
         return results
 
