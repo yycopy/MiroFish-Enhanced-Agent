@@ -4,7 +4,7 @@
 
 基于 MiroFish 开源多智能体仿真框架的工程化增强项目，面向主动信息采集、长期记忆、图谱关系记忆、多 Agent 可信评审和可追溯报告生成。
 
-[English](./README.md) | [中文文档](./README-ZH.md)
+[English](./README-EN.md) | [中文文档](./README-ZH.md)
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Backend-000000?style=flat-square&logo=flask&logoColor=white)
@@ -17,7 +17,7 @@
 
 ## 项目概述
 
-MiroFish-Pro 是一个“多智能体世界推演系统增强版”。项目在原 MiroFish 的上传资料、生成 ontology、写入 Zep、生成 OASIS agent profile、启动 camel-oasis 仿真、生成报告这条主链路上，扩展了真实可运行的工程化能力：
+MiroFish-Pro 是一个"多智能体世界推演系统增强版"。项目在原 MiroFish 的上传资料、生成 ontology、写入 Zep、生成 OASIS agent profile、启动 camel-oasis 仿真、生成报告这条主链路上，扩展了真实可运行的工程化能力：
 
 - 通过 APScheduler、Celery 和 RabbitMQ 构建主动信息采集任务链路。
 - 使用 MySQL 保存采集任务、长期记忆、证据和可信评审结果。
@@ -26,7 +26,7 @@ MiroFish-Pro 是一个“多智能体世界推演系统增强版”。项目在�
 - 使用多角色 Agent 对报告 claim 进行独立评审，输出置信度和风险等级。
 - 增强 ReportAgent，使其可以调用搜索、记忆召回、图谱检索、Agent 采访和可信评审工具，生成可追溯预测报告。
 
-这个仓库更偏向 AI Agent 后端工程实践，不是简单的 demo 包装。重点在于把“仿真推演”从一次性生成，扩展为可采集、可沉淀、可召回、可评审、可追溯的完整链路。
+这个仓库更偏向 AI Agent 后端工程实践，不是简单的 demo 包装。重点在于把"仿真推演"从一次性生成，扩展为可采集、可沉淀、可召回、可评审、可追溯的完整链路。
 
 ## 核心能力
 
